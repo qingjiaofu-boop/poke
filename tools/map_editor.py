@@ -898,7 +898,19 @@ def main(name: str):
                     preview_mode = False
                     mode = "paint"
                 elif event.key == pygame.K_c:
-                    mode = "collision" if mode != "collision" else "paint"
+                    if mode == "collision":
+                        mode = "paint"
+                    else:
+                        # Collision cells belong to the current (second) layer.
+                        # Switch there automatically so C never appears to do
+                        # nothing while the lower or upper layer is selected.
+                        if layer != 1:
+                            layer = 1
+                            preview_mode = False
+                        mode = "collision"
+                        notice_lines = ["碰撞标记模式", "红框只表示第二层碰撞格，不会写入 PNG；再次按 C 退出。"]
+                        notice_color = (220, 80, 70)
+                        notice_until = pygame.time.get_ticks() + 3000
                 elif event.key == pygame.K_p:
                     mode = "start"
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
@@ -983,11 +995,15 @@ def main(name: str):
         screen.fill((35, 48, 43))
         # Map preview with active-layer focus.
         draw_layer_preview()
-        if not preview_mode:
+        # Collision markers are an editor-only overlay for the current layer.
+        # Since blocked cells belong exclusively to layer 2 (index 1), do not
+        # show red boxes while inspecting the lower or upper layer.
+        if not preview_mode and layer == 1:
             for x, y in blocked:
                 pygame.draw.rect(screen, (220, 80, 70),
                                  (CANVAS.x + x * VIEW_TILE + 2, CANVAS.y + y * VIEW_TILE + 2,
                                   max(2, VIEW_TILE - 4), max(2, VIEW_TILE - 4)), 2)
+        if not preview_mode:
             sx, sy = start
             pygame.draw.rect(screen, (250, 220, 80),
                              (CANVAS.x + sx * VIEW_TILE + 5, CANVAS.y + sy * VIEW_TILE + 5,
@@ -1066,7 +1082,7 @@ def main(name: str):
             screen.blit(small.render("当前为游戏画面预览：三层已正常合成", True, (178, 222, 184)), (24, 460))
         else:
             screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 460))
-            screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
+            screen.blit(small.render("红框 = 第二层碰撞标记（仅编辑器）   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
         pygame.draw.rect(screen, (61, 109, 87) if dirty else (48, 74, 64), SAVE_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (142, 230, 151) if dirty else (137, 171, 139), SAVE_BUTTON, 2, border_radius=5)
         screen.blit(font.render("保存地图  [S]", True, (245, 246, 219)), (SAVE_BUTTON.x + 88, SAVE_BUTTON.y + 5))
