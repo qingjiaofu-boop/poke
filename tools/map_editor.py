@@ -30,8 +30,10 @@ MAP_W, MAP_H, TILE = 24, 18, 32
 SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
 CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
+MAP_FRAME = pygame.Rect(400, 78, 768, 576)
 SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
 PASTE_BUTTON = pygame.Rect(24, 580, 320, 38)
+NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
 
 
 def load_tiles():
@@ -74,16 +76,26 @@ def make_font(size: int):
 
 
 def main(name: str):
+    global MAP_W, MAP_H, CANVAS
     pygame.init()
     screen = pygame.display.set_mode(SCREEN)
     pygame.display.set_caption(f"三层地图编辑器 - {name}")
     font = make_font(18)
     small = make_font(15)
-    tiles = load_tiles()
-    layers = [load_or_blank(OUT / f"{name}_{layer}.png") for layer in ("lower", "current", "upper")]
     meta_path = OUT / "outdoor_maps.json"
     all_meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     old = all_meta.get(name, {})
+    stored_size = old.get("size", [24, 18])
+    MAP_W = max(1, min(24, int(stored_size[0])))
+    MAP_H = max(1, min(18, int(stored_size[1])))
+    CANVAS = pygame.Rect(
+        MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
+        MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
+        MAP_W * TILE,
+        MAP_H * TILE,
+    )
+    tiles = load_tiles()
+    layers = [load_or_blank(OUT / f"{name}_{layer}.png") for layer in ("lower", "current", "upper")]
     blocked = {tuple(x) for x in old.get("blocked", [])}
     start = tuple(old.get("start", [1, 1]))
     layer = 0
@@ -101,6 +113,8 @@ def main(name: str):
     notice_lines = []
     notice_color = (142, 230, 151)
     notice_until = 0
+    dialog_mode = False
+    new_map_input = ""
 
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
@@ -140,6 +154,52 @@ def main(name: str):
         notice_lines = list(lines)
         notice_color = color
         notice_until = pygame.time.get_ticks() + seconds * 1000
+
+    def enter_new_map():
+        nonlocal dialog_mode, new_map_input
+        dialog_mode = True
+        new_map_input = ""
+
+    def create_new_map():
+        nonlocal name, layers, blocked, start, dialog_mode, new_map_input
+        global MAP_W, MAP_H, CANVAS
+        parts = new_map_input.strip().split()
+        if len(parts) != 3:
+            show_notice(["格式应为：地图名 宽 高，例如 forest2 20 14。"], (255, 158, 120), 5)
+            return
+        new_name = parts[0]
+        if not new_name.replace("_", "").isalnum():
+            show_notice(["地图名只能使用字母、数字和下划线。"], (255, 158, 120), 5)
+            return
+        try:
+            new_w, new_h = int(parts[1]), int(parts[2])
+        except ValueError:
+            show_notice(["宽和高必须是数字，例如 20 14。"], (255, 158, 120), 5)
+            return
+        if not (1 <= new_w <= 24 and 1 <= new_h <= 18):
+            show_notice(["当前编辑器支持：宽 1-24 格，高 1-18 格。"], (255, 158, 120), 5)
+            return
+        exists = new_name in all_meta or any((OUT / f"{new_name}_{suffix}.png").exists()
+                                               for suffix in ("lower", "current", "upper"))
+        if exists:
+            show_notice([f"地图 {new_name} 已存在，请换一个名称。"], (255, 158, 120), 5)
+            return
+        name = new_name
+        MAP_W, MAP_H = new_w, new_h
+        CANVAS = pygame.Rect(
+            MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
+            MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
+            MAP_W * TILE,
+            MAP_H * TILE,
+        )
+        layers = [pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA) for _ in range(3)]
+        blocked = set()
+        start = (0, 0)
+        dialog_mode = False
+        new_map_input = ""
+        pygame.display.set_caption(f"三层地图编辑器 - {name}")
+        save()
+        show_notice([f"已新建 {name}：{MAP_W} × {MAP_H} 格", "已创建三层 PNG 和 outdoor_maps.json 配置。"], (142, 230, 151), 6)
 
     def copy_selection():
         """Copy the same rectangular area from all three map layers."""
@@ -252,12 +312,25 @@ def main(name: str):
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
+                if dialog_mode:
+                    if event.key == pygame.K_ESCAPE:
+                        dialog_mode = False
+                        new_map_input = ""
+                    elif event.key == pygame.K_RETURN:
+                        create_new_map()
+                    elif event.key == pygame.K_BACKSPACE:
+                        new_map_input = new_map_input[:-1]
+                    elif getattr(event, "unicode", "").isprintable():
+                        new_map_input += event.unicode
+                    continue
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_s:
                     save()
                 elif event.key == pygame.K_m or getattr(event, "unicode", "").lower() == "m":
                     enter_select()
+                elif event.key == pygame.K_n:
+                    enter_new_map()
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -283,11 +356,16 @@ def main(name: str):
                     palette_page += 1
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button in (1, 3):
+                    if dialog_mode:
+                        continue
                     if event.button == 1 and SELECT_BUTTON.collidepoint(event.pos):
                         enter_select()
                         continue
                     if event.button == 1 and PASTE_BUTTON.collidepoint(event.pos):
                         enter_paste()
+                        continue
+                    if event.button == 1 and NEW_BUTTON.collidepoint(event.pos):
+                        enter_new_map()
                         continue
                     cell = cell_at(event.pos)
                     if preview_mode:
@@ -417,8 +495,22 @@ def main(name: str):
         pygame.draw.rect(screen, (255, 228, 92) if paste_active else ((142, 230, 151) if paste_enabled else (100, 125, 105)), PASTE_BUTTON, 2, border_radius=5)
         paste_text = "开始粘贴  [Ctrl+V]" if paste_enabled else "开始粘贴  [先 Ctrl+C]"
         screen.blit(font.render(paste_text, True, (245, 246, 219)), (PASTE_BUTTON.x + 65, PASTE_BUTTON.y + 8))
-        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 635))
-        screen.blit(small.render("地面/当前/上层及碰撞会一起复制。", True, (175, 196, 175)), (24, 660))
+        pygame.draw.rect(screen, (61, 109, 87) if dialog_mode else (48, 74, 64), NEW_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if dialog_mode else (137, 171, 139), NEW_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("新建地图  [N]", True, (245, 246, 219)), (NEW_BUTTON.x + 80, NEW_BUTTON.y + 8))
+        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 672))
+        if dialog_mode:
+            overlay = pygame.Surface(SCREEN, pygame.SRCALPHA)
+            overlay.fill((8, 15, 13, 185))
+            screen.blit(overlay, (0, 0))
+            dialog = pygame.Rect(430, 250, 700, 190)
+            pygame.draw.rect(screen, (28, 55, 45), dialog, border_radius=10)
+            pygame.draw.rect(screen, (255, 228, 92), dialog, 3, border_radius=10)
+            screen.blit(font.render("新建三层地图", True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
+            screen.blit(small.render("输入：地图名 宽 高（例如 forest2 20 14）", True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
+            pygame.draw.rect(screen, (12, 25, 22), (dialog.x + 24, dialog.y + 92, dialog.width - 48, 42), border_radius=5)
+            screen.blit(font.render(new_map_input or "地图名 宽 高", True, (245, 246, 219)), (dialog.x + 36, dialog.y + 102))
+            screen.blit(small.render("Enter 创建   Esc 取消   范围：宽 1-24，高 1-18", True, (220, 235, 210)), (dialog.x + 24, dialog.y + 150))
         pygame.display.flip()
         clock.tick(60)
     if dirty:
