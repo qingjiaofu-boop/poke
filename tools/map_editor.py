@@ -139,16 +139,43 @@ def run_world_editor(screen, font, small, all_meta):
     notice_until = 0
     dirty = False
     preview_only = False
+    sidebar_visible = True
+    zoom = 1.0
+    pan_x = 0
+    pan_y = 0
+    dragging = False
+    drag_pos = None
     clock = pygame.time.Clock()
     frame = pygame.Rect(390, 70, 1180, 780)
     list_rect = pygame.Rect(18, 110, 340, 690)
-    view_tile = max(8, min(16, frame.width // world_w, frame.height // world_h))
-    canvas = pygame.Rect(
-        frame.x + (frame.width - world_w * view_tile) // 2,
-        frame.y + (frame.height - world_h * view_tile) // 2,
-        world_w * view_tile,
-        world_h * view_tile,
-    )
+    view_tile = 8
+    canvas = pygame.Rect(0, 0, 1, 1)
+
+    def update_view():
+        """Fit or zoom the world canvas into the available workspace."""
+        nonlocal frame, list_rect, view_tile, canvas, pan_x, pan_y
+        screen_w, screen_h = screen.get_size()
+        sidebar_width = 370 if sidebar_visible else 0
+        frame = pygame.Rect(sidebar_width + 20, 70,
+                            max(240, screen_w - sidebar_width - 40),
+                            max(240, screen_h - 130))
+        list_rect = pygame.Rect(18, 110, 340, max(180, screen_h - 210))
+        fit_tile = min(16, frame.width // max(1, world_w), frame.height // max(1, world_h))
+        view_tile = max(4, int(fit_tile * zoom))
+        canvas_width = world_w * view_tile
+        canvas_height = world_h * view_tile
+        max_pan_x = max(0, canvas_width - frame.width)
+        max_pan_y = max(0, canvas_height - frame.height)
+        pan_x = min(max(0, pan_x), max_pan_x)
+        pan_y = min(max(0, pan_y), max_pan_y)
+        canvas = pygame.Rect(
+            frame.x + (frame.width - canvas_width) // 2 - pan_x,
+            frame.y + (frame.height - canvas_height) // 2 - pan_y,
+            canvas_width,
+            canvas_height,
+        )
+
+    update_view()
 
     def show(text, seconds=4):
         nonlocal notice, notice_until
@@ -205,7 +232,7 @@ def run_world_editor(screen, font, small, all_meta):
         return index if 0 <= index < len(map_names) else None
 
     def world_cell_at(pos):
-        if not canvas.collidepoint(pos):
+        if not frame.collidepoint(pos) or not canvas.collidepoint(pos):
             return None
         return ((pos[0] - canvas.x) // view_tile, (pos[1] - canvas.y) // view_tile)
 
@@ -306,6 +333,23 @@ def run_world_editor(screen, font, small, all_meta):
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_TAB:
+                    sidebar_visible = not sidebar_visible
+                    update_view()
+                    show("已切换大画布模式；Tab 可显示或隐藏左侧地图栏。", 3)
+                elif event.key == pygame.K_0:
+                    zoom = 1.0
+                    pan_x = pan_y = 0
+                    update_view()
+                    show("已恢复完整箱庭视图。", 2)
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    zoom = max(0.35, zoom / 1.25)
+                    update_view()
+                    show(f"画布缩放：{int(zoom * 100)}%", 2)
+                elif event.key in (pygame.K_EQUALS, pygame.K_KP_PLUS):
+                    zoom = min(4.0, zoom * 1.25)
+                    update_view()
+                    show(f"画布缩放：{int(zoom * 100)}%", 2)
                 elif event.key == pygame.K_s:
                     save_world()
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
@@ -343,6 +387,10 @@ def run_world_editor(screen, font, small, all_meta):
                 elif event.key == pygame.K_RETURN and dirty:
                     save_world()
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 2:
+                    dragging = True
+                    drag_pos = event.pos
+                    continue
                 if event.button == 1:
                     card = map_card_at(event.pos)
                     if card is not None:
@@ -377,26 +425,44 @@ def run_world_editor(screen, font, small, all_meta):
                             selected_placement = min(existing, len(placements) - 1) if placements else None
                             dirty = True
                             show(f"已移除 {removed['map']}。")
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 2:
+                    dragging = False
+                    drag_pos = None
+            elif event.type == pygame.MOUSEMOTION and dragging and drag_pos is not None:
+                pan_x -= event.pos[0] - drag_pos[0]
+                pan_y -= event.pos[1] - drag_pos[1]
+                drag_pos = event.pos
+                update_view()
+            elif event.type == pygame.MOUSEWHEEL and frame.collidepoint(pygame.mouse.get_pos()):
+                zoom = min(4.0, zoom * 1.25) if event.y > 0 else max(0.35, zoom / 1.25)
+                update_view()
+                show(f"画布缩放：{int(zoom * 100)}%", 2)
 
         screen.fill((35, 48, 43))
         screen.blit(font.render("箱庭地图拼接工作区", True, (242, 244, 218)), (18, 28))
-        screen.blit(small.render("空白处左键放置，点击地图后方向键移动，R 旋转，Shift 加速，Delete 删除；S 保存；Esc 返回", True, (190, 210, 190)), (390, 40))
-        pygame.draw.rect(screen, (20, 30, 28), list_rect, border_radius=8)
-        screen.blit(font.render("可用地图", True, (242, 244, 218)), (32, 78))
-        for index, map_name in enumerate(map_names):
-            y = list_rect.y + index * 42
-            if y + 38 > list_rect.bottom:
-                break
-            active = index == selected
-            rect = pygame.Rect(list_rect.x + 8, y, list_rect.width - 16, 36)
-            pygame.draw.rect(screen, (61, 109, 87) if active else (42, 61, 52), rect, border_radius=5)
-            pygame.draw.rect(screen, (255, 228, 92) if active else (100, 125, 105), rect, 2, border_radius=5)
-            size = all_meta[map_name].get("size", [24, 18])
-            screen.blit(small.render(f"{map_name}   {size[0]}×{size[1]}", True, (245, 246, 219)), (rect.x + 12, rect.y + 9))
-        selected_name = map_names[selected] if map_names else "无地图"
-        screen.blit(small.render(f"当前选择：{selected_name}", True, (220, 235, 210)), (32, 820))
-        screen.blit(font.render(f"箱庭尺寸：{world_w}×{world_h} 格", True, (242, 244, 218)), (390, 860))
+        help_text = ("空白处左键放置，点击地图后方向键移动，R 旋转，Shift 加速，Delete 删除；"
+                     "滚轮缩放，中键拖动，Tab 大画布，0 适配，S 保存；Esc 返回")
+        screen.blit(small.render(help_text, True, (190, 210, 190)), (frame.x, 40))
+        if sidebar_visible:
+            pygame.draw.rect(screen, (20, 30, 28), list_rect, border_radius=8)
+            screen.blit(font.render("可用地图", True, (242, 244, 218)), (32, 78))
+            for index, map_name in enumerate(map_names):
+                y = list_rect.y + index * 42
+                if y + 38 > list_rect.bottom:
+                    break
+                active = index == selected
+                rect = pygame.Rect(list_rect.x + 8, y, list_rect.width - 16, 36)
+                pygame.draw.rect(screen, (61, 109, 87) if active else (42, 61, 52), rect, border_radius=5)
+                pygame.draw.rect(screen, (255, 228, 92) if active else (100, 125, 105), rect, 2, border_radius=5)
+                size = all_meta[map_name].get("size", [24, 18])
+                screen.blit(small.render(f"{map_name}   {size[0]}×{size[1]}", True, (245, 246, 219)), (rect.x + 12, rect.y + 9))
+            selected_name = map_names[selected] if map_names else "无地图"
+            screen.blit(small.render(f"当前选择：{selected_name}", True, (220, 235, 210)), (32, list_rect.bottom + 20))
+        screen.blit(font.render(f"箱庭尺寸：{world_w}×{world_h} 格    缩放：{int(zoom * 100)}%", True, (242, 244, 218)), (frame.x, screen.get_height() - 40))
         pygame.draw.rect(screen, (180, 210, 175), canvas, 2)
+        old_clip = screen.get_clip()
+        screen.set_clip(frame)
         # A light grid makes cell alignment visible even when a map has a
         # transparent layer or a large empty area.
         grid_step = 1 if view_tile >= 10 else 2
@@ -453,9 +519,10 @@ def run_world_editor(screen, font, small, all_meta):
                     f"尺寸：{placement_size(selected_item)[0]}×{placement_size(selected_item)[1]}    "
                     f"旋转：{int(selected_item.get('rotation', 0))}°    "
                     f"连接：{selected_connections} 条")
-            screen.blit(small.render(info, True, (255, 232, 130)), (390, 870))
+            screen.blit(small.render(info, True, (255, 232, 130)), (frame.x, frame.bottom - 28))
+        screen.set_clip(old_clip)
         if pygame.time.get_ticks() < notice_until:
-            box = pygame.Rect(410, 735, 700, 48)
+            box = pygame.Rect(frame.x + 20, screen.get_height() - 105, min(900, frame.width - 40), 48)
             pygame.draw.rect(screen, (33, 93, 62), box, border_radius=6)
             pygame.draw.rect(screen, (142, 230, 151), box, 2, border_radius=6)
             screen.blit(small.render(notice, True, (232, 255, 218)), (box.x + 14, box.y + 14))
