@@ -127,6 +127,7 @@ def run_world_editor(screen, font, small, all_meta):
             item_id = f"{base_id}_{suffix}"
             suffix += 1
         item["id"] = item_id
+        item["rotation"] = int(item.get("rotation", 0)) % 360
         used_ids.add(item_id)
     map_names = list(all_meta.keys())
     map_surfaces = {map_name: load_map_surface_set(map_name, all_meta[map_name])
@@ -162,7 +163,7 @@ def run_world_editor(screen, font, small, all_meta):
         for item in manifest["maps"]:
             text_lines.append(
                 f"- {item['id']} = {item['map']}，位置 ({item['position']['x']},{item['position']['y']})，"
-                f"尺寸 {item['size']['width']}×{item['size']['height']}"
+                f"尺寸 {item['size']['width']}×{item['size']['height']}，旋转 {item['rotation']}°"
             )
         text_lines.append("")
         text_lines.append("地图连接：")
@@ -187,8 +188,10 @@ def run_world_editor(screen, font, small, all_meta):
         (OUT / "world_connections.txt").write_text("\n".join(text_lines) + "\n", encoding="utf-8")
         composites = [pygame.Surface((world_w * TILE, world_h * TILE), pygame.SRCALPHA) for _ in range(3)]
         for item in placements:
-            spec = all_meta.get(item["map"], {})
             for index, image in enumerate(map_surfaces[item["map"]]):
+                rotation = int(item.get("rotation", 0)) % 360
+                if rotation:
+                    image = pygame.transform.rotate(image, -rotation)
                 composites[index].blit(image, (int(item.get("x", 0)) * TILE, int(item.get("y", 0)) * TILE))
         for index, suffix in enumerate(("lower", "current", "upper")):
             pygame.image.save(composites[index], str(OUT / f"world_{suffix}.png"))
@@ -210,6 +213,16 @@ def run_world_editor(screen, font, small, all_meta):
         size = all_meta.get(map_name, {}).get("size", [24, 18])
         return int(size[0]), int(size[1])
 
+    def placement_size(item):
+        width, height = map_size(item["map"])
+        if int(item.get("rotation", 0)) % 180:
+            return height, width
+        return width, height
+
+    def rotated_surface(surface, item):
+        rotation = int(item.get("rotation", 0)) % 360
+        return pygame.transform.rotate(surface, -rotation) if rotation else surface
+
     def new_placement_id(map_name):
         """Return a stable readable id without colliding with old placements."""
         used = {str(item.get("id", "")) for item in placements}
@@ -224,7 +237,7 @@ def run_world_editor(screen, font, small, all_meta):
         """Return the topmost placed map containing a world cell."""
         for index in range(len(placements) - 1, -1, -1):
             item = placements[index]
-            width, height = map_size(item["map"])
+            width, height = placement_size(item)
             x, y = int(item.get("x", 0)), int(item.get("y", 0))
             if x <= cell[0] < x + width and y <= cell[1] < y + height:
                 return index
@@ -234,10 +247,11 @@ def run_world_editor(screen, font, small, all_meta):
         """Build explicit edge-to-edge connections for the current layout."""
         exported = []
         for item in placements:
-            width, height = map_size(item["map"])
+            width, height = placement_size(item)
             x, y = int(item.get("x", 0)), int(item.get("y", 0))
             exported.append({
                 "id": item["id"], "map": item["map"],
+                "rotation": int(item.get("rotation", 0)) % 360,
                 "position": {"x": x, "y": y},
                 "size": {"width": width, "height": height},
                 "bounds": {"left": x, "top": y, "right": x + width, "bottom": y + height},
@@ -251,11 +265,11 @@ def run_world_editor(screen, font, small, all_meta):
         connections = []
         for first in range(len(placements)):
             a = placements[first]
-            aw, ah = map_size(a["map"])
+            aw, ah = placement_size(a)
             ax, ay = int(a.get("x", 0)), int(a.get("y", 0))
             for second in range(first + 1, len(placements)):
                 b = placements[second]
-                bw, bh = map_size(b["map"])
+                bw, bh = placement_size(b)
                 bx, by = int(b.get("x", 0)), int(b.get("y", 0))
                 if ax + aw == bx or bx + bw == ax:
                     start, end = max(ay, by), min(ay + ah, by + bh)
@@ -300,11 +314,24 @@ def run_world_editor(screen, font, small, all_meta):
                         dx = (1 if event.key == pygame.K_RIGHT else -1 if event.key == pygame.K_LEFT else 0) * step
                         dy = (1 if event.key == pygame.K_DOWN else -1 if event.key == pygame.K_UP else 0) * step
                         item = placements[selected_placement]
-                        width, height = map_size(item["map"])
+                        width, height = placement_size(item)
                         item["x"] = min(max(0, int(item.get("x", 0)) + dx), max(0, world_w - width))
                         item["y"] = min(max(0, int(item.get("y", 0)) + dy), max(0, world_h - height))
                         dirty = True
                         show(f"已移动 {item['map']} 到 ({item['x']}, {item['y']})。Shift+方向键可快速移动。", 2)
+                elif event.key == pygame.K_r:
+                    if selected_placement is not None and selected_placement < len(placements):
+                        item = placements[selected_placement]
+                        old_width, old_height = placement_size(item)
+                        item["rotation"] = (int(item.get("rotation", 0)) + 90) % 360
+                        new_width, new_height = placement_size(item)
+                        # Keep the block centered as its width and height swap.
+                        center_x = int(item.get("x", 0)) * 2 + old_width
+                        center_y = int(item.get("y", 0)) * 2 + old_height
+                        item["x"] = min(max(0, (center_x - new_width + 1) // 2), max(0, world_w - new_width))
+                        item["y"] = min(max(0, (center_y - new_height + 1) // 2), max(0, world_h - new_height))
+                        dirty = True
+                        show(f"已旋转 {item['map']}：{item['rotation']}°，位置 ({item['x']},{item['y']})。", 3)
                 elif event.key == pygame.K_DELETE:
                     if selected_placement is not None and selected_placement < len(placements):
                         removed = placements.pop(selected_placement)
@@ -336,7 +363,8 @@ def run_world_editor(screen, font, small, all_meta):
                         map_width, map_height = int(size[0]), int(size[1])
                         x = min(max(0, cell[0]), max(0, world_w - map_width))
                         y = min(max(0, cell[1]), max(0, world_h - map_height))
-                        placements.append({"id": new_placement_id(map_name), "map": map_name, "x": x, "y": y})
+                        placements.append({"id": new_placement_id(map_name), "map": map_name,
+                                           "x": x, "y": y, "rotation": 0})
                         selected_placement = len(placements) - 1
                         dirty = True
                         show(f"已放置 {map_name}，左键可继续放置，右键删除地图块。")
@@ -352,7 +380,7 @@ def run_world_editor(screen, font, small, all_meta):
 
         screen.fill((35, 48, 43))
         screen.blit(font.render("箱庭地图拼接工作区", True, (242, 244, 218)), (18, 28))
-        screen.blit(small.render("空白处左键放置，点击已有地图后用方向键移动（Shift 加速），Delete 删除；S 保存连接关系；Esc 返回", True, (190, 210, 190)), (390, 40))
+        screen.blit(small.render("空白处左键放置，点击地图后方向键移动，R 旋转，Shift 加速，Delete 删除；S 保存；Esc 返回", True, (190, 210, 190)), (390, 40))
         pygame.draw.rect(screen, (20, 30, 28), list_rect, border_radius=8)
         screen.blit(font.render("可用地图", True, (242, 244, 218)), (32, 78))
         for index, map_name in enumerate(map_names):
@@ -381,11 +409,11 @@ def run_world_editor(screen, font, small, all_meta):
         connections = connection_manifest()["connections"]
         # Draw each placed map as a composited preview plus a colored boundary.
         for index, item in enumerate(placements):
-            spec = all_meta.get(item["map"], {})
             images = map_surfaces[item["map"]]
             composed = pygame.Surface(images[0].get_size(), pygame.SRCALPHA)
             for image in images:
                 composed.blit(image, (0, 0))
+            composed = rotated_surface(composed, item)
             width, height = composed.get_width() // TILE, composed.get_height() // TILE
             preview = pygame.transform.scale(composed, (width * view_tile, height * view_tile))
             x = canvas.x + int(item.get("x", 0)) * view_tile
@@ -394,7 +422,7 @@ def run_world_editor(screen, font, small, all_meta):
             pygame.draw.rect(screen, (255, 228, 92) if index == selected_placement else (112, 178, 150),
                              (x, y, width * view_tile, height * view_tile), 2)
             if not preview_only:
-                label = small.render(f"{item['id']}  ({item.get('x', 0)},{item.get('y', 0)})", True, (255, 250, 190))
+                label = small.render(f"{item['id']}  ({item.get('x', 0)},{item.get('y', 0)}) R{int(item.get('rotation', 0))}°", True, (255, 250, 190))
                 screen.blit(label, (x + 4, y + 3))
         if not preview_only:
             # Draw after the map previews so exact joins remain visible.
@@ -404,12 +432,12 @@ def run_world_editor(screen, font, small, all_meta):
                 start = connection["world_range"]["start"] * view_tile
                 end = connection["world_range"]["end"] * view_tile
                 if connection["axis"] == "vertical":
-                    edge_x = (int(left.get("x", 0)) + map_size(left["map"])[0]) * view_tile
+                    edge_x = (int(left.get("x", 0)) + placement_size(left)[0]) * view_tile
                     pygame.draw.line(screen, (90, 235, 242),
                                      (canvas.x + edge_x, canvas.y + start),
                                      (canvas.x + edge_x, canvas.y + end), 4)
                 else:
-                    edge_y = (int(left.get("y", 0)) + map_size(left["map"])[1]) * view_tile
+                    edge_y = (int(left.get("y", 0)) + placement_size(left)[1]) * view_tile
                     pygame.draw.line(screen, (90, 235, 242),
                                      (canvas.x + start, canvas.y + edge_y),
                                      (canvas.x + end, canvas.y + edge_y), 4)
@@ -422,7 +450,8 @@ def run_world_editor(screen, font, small, all_meta):
             )
             info = (f"已选中：{selected_item['id']}    地图：{selected_map}    "
                     f"位置：({selected_item.get('x', 0)},{selected_item.get('y', 0)})    "
-                    f"尺寸：{map_size(selected_map)[0]}×{map_size(selected_map)[1]}    "
+                    f"尺寸：{placement_size(selected_item)[0]}×{placement_size(selected_item)[1]}    "
+                    f"旋转：{int(selected_item.get('rotation', 0))}°    "
                     f"连接：{selected_connections} 条")
             screen.blit(small.render(info, True, (255, 232, 130)), (390, 870))
         if pygame.time.get_ticks() < notice_until:
