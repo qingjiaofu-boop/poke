@@ -118,11 +118,22 @@ def run_world_editor(screen, font, small, all_meta):
     world_h = max(1, min(100, int(world_h)))
     placements = [dict(item) for item in world_meta.get("placements", [])
                   if item.get("map") in all_meta]
+    used_ids = set()
+    for index, item in enumerate(placements):
+        base_id = str(item.get("id") or f"{item['map']}_{index + 1}")
+        item_id = base_id
+        suffix = 2
+        while item_id in used_ids:
+            item_id = f"{base_id}_{suffix}"
+            suffix += 1
+        item["id"] = item_id
+        used_ids.add(item_id)
     map_names = list(all_meta.keys())
     map_surfaces = {map_name: load_map_surface_set(map_name, all_meta[map_name])
                     for map_name in map_names}
     selected = map_names.index(placements[0]["map"]) if placements else 0
     selected = min(selected, max(0, len(map_names) - 1))
+    selected_placement = len(placements) - 1 if placements else None
     notice = ""
     notice_until = 0
     dirty = False
@@ -146,9 +157,34 @@ def run_world_editor(screen, font, small, all_meta):
     def save_world():
         nonlocal dirty
         WORLD_LAYOUT.parent.mkdir(parents=True, exist_ok=True)
+        manifest = connection_manifest()
+        text_lines = [f"箱庭尺寸：{world_w}×{world_h} 格", "", "地图位置："]
+        for item in manifest["maps"]:
+            text_lines.append(
+                f"- {item['id']} = {item['map']}，位置 ({item['position']['x']},{item['position']['y']})，"
+                f"尺寸 {item['size']['width']}×{item['size']['height']}"
+            )
+        text_lines.append("")
+        text_lines.append("地图连接：")
+        if manifest["connections"]:
+            for link in manifest["connections"]:
+                world_range = link["world_range"]
+                text_lines.append(
+                    f"- {link['from']}.{link['from_edge']} → {link['to']}.{link['to_edge']}，"
+                    f"世界 {world_range['axis']}={world_range['start']}..{world_range['end']}，"
+                    f"前者局部 {link['from_local_range']['start']}..{link['from_local_range']['end']}，"
+                    f"后者局部 {link['to_local_range']['start']}..{link['to_local_range']['end']}"
+                )
+        else:
+            text_lines.append("- 暂无边缘对齐的地图连接。")
         data = {"size": [world_w, world_h], "placements": placements,
+                "connections": manifest["connections"],
+                "connection_manifest": "maps/world_connections.json",
+                "connection_text_manifest": "maps/world_connections.txt",
                 "preview": {s: f"maps/world_{s}.png" for s in ("lower", "current", "upper")}}
         WORLD_LAYOUT.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        (OUT / "world_connections.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        (OUT / "world_connections.txt").write_text("\n".join(text_lines) + "\n", encoding="utf-8")
         composites = [pygame.Surface((world_w * TILE, world_h * TILE), pygame.SRCALPHA) for _ in range(3)]
         for item in placements:
             spec = all_meta.get(item["map"], {})
@@ -157,7 +193,7 @@ def run_world_editor(screen, font, small, all_meta):
         for index, suffix in enumerate(("lower", "current", "upper")):
             pygame.image.save(composites[index], str(OUT / f"world_{suffix}.png"))
         dirty = False
-        show("箱庭布局已保存，并生成 world_lower/current/upper.png", 5)
+        show(f"箱庭已保存：{len(manifest['connections'])} 条连接，已导出 JSON 和 TXT 清单", 5)
 
     def map_card_at(pos):
         if not list_rect.collidepoint(pos):
@@ -170,6 +206,83 @@ def run_world_editor(screen, font, small, all_meta):
             return None
         return ((pos[0] - canvas.x) // view_tile, (pos[1] - canvas.y) // view_tile)
 
+    def map_size(map_name):
+        size = all_meta.get(map_name, {}).get("size", [24, 18])
+        return int(size[0]), int(size[1])
+
+    def new_placement_id(map_name):
+        """Return a stable readable id without colliding with old placements."""
+        used = {str(item.get("id", "")) for item in placements}
+        number = 1
+        candidate = f"{map_name}_{number}"
+        while candidate in used:
+            number += 1
+            candidate = f"{map_name}_{number}"
+        return candidate
+
+    def placement_at(cell):
+        """Return the topmost placed map containing a world cell."""
+        for index in range(len(placements) - 1, -1, -1):
+            item = placements[index]
+            width, height = map_size(item["map"])
+            x, y = int(item.get("x", 0)), int(item.get("y", 0))
+            if x <= cell[0] < x + width and y <= cell[1] < y + height:
+                return index
+        return None
+
+    def connection_manifest():
+        """Build explicit edge-to-edge connections for the current layout."""
+        exported = []
+        for item in placements:
+            width, height = map_size(item["map"])
+            x, y = int(item.get("x", 0)), int(item.get("y", 0))
+            exported.append({
+                "id": item["id"], "map": item["map"],
+                "position": {"x": x, "y": y},
+                "size": {"width": width, "height": height},
+                "bounds": {"left": x, "top": y, "right": x + width, "bottom": y + height},
+                "edges": {
+                    "left": {"x": x, "y": [y, y + height]},
+                    "right": {"x": x + width, "y": [y, y + height]},
+                    "top": {"y": y, "x": [x, x + width]},
+                    "bottom": {"y": y + height, "x": [x, x + width]},
+                },
+            })
+        connections = []
+        for first in range(len(placements)):
+            a = placements[first]
+            aw, ah = map_size(a["map"])
+            ax, ay = int(a.get("x", 0)), int(a.get("y", 0))
+            for second in range(first + 1, len(placements)):
+                b = placements[second]
+                bw, bh = map_size(b["map"])
+                bx, by = int(b.get("x", 0)), int(b.get("y", 0))
+                if ax + aw == bx or bx + bw == ax:
+                    start, end = max(ay, by), min(ay + ah, by + bh)
+                    if start < end:
+                        left, right = (a, b) if ax + aw == bx else (b, a)
+                        left_y = int(left.get("y", 0))
+                        right_y = int(right.get("y", 0))
+                        connections.append({"type": "edge", "axis": "vertical",
+                                            "from": left["id"], "to": right["id"],
+                                            "from_edge": "right", "to_edge": "left",
+                                            "world_range": {"axis": "y", "start": start, "end": end},
+                                            "from_local_range": {"axis": "y", "start": start - left_y, "end": end - left_y},
+                                            "to_local_range": {"axis": "y", "start": start - right_y, "end": end - right_y}})
+                if ay + ah == by or by + bh == ay:
+                    start, end = max(ax, bx), min(ax + aw, bx + bw)
+                    if start < end:
+                        top, bottom = (a, b) if ay + ah == by else (b, a)
+                        top_x = int(top.get("x", 0))
+                        bottom_x = int(bottom.get("x", 0))
+                        connections.append({"type": "edge", "axis": "horizontal",
+                                            "from": top["id"], "to": bottom["id"],
+                                            "from_edge": "bottom", "to_edge": "top",
+                                            "world_range": {"axis": "x", "start": start, "end": end},
+                                            "from_local_range": {"axis": "x", "start": start - top_x, "end": end - top_x},
+                                            "to_local_range": {"axis": "x", "start": start - bottom_x, "end": end - bottom_x}})
+        return {"world_size": [world_w, world_h], "maps": exported, "connections": connections}
+
     running = True
     while running:
         for event in pygame.event.get():
@@ -181,6 +294,23 @@ def run_world_editor(screen, font, small, all_meta):
                     running = False
                 elif event.key == pygame.K_s:
                     save_world()
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
+                    if selected_placement is not None and selected_placement < len(placements):
+                        step = 5 if pygame.key.get_mods() & pygame.KMOD_SHIFT else 1
+                        dx = (1 if event.key == pygame.K_RIGHT else -1 if event.key == pygame.K_LEFT else 0) * step
+                        dy = (1 if event.key == pygame.K_DOWN else -1 if event.key == pygame.K_UP else 0) * step
+                        item = placements[selected_placement]
+                        width, height = map_size(item["map"])
+                        item["x"] = min(max(0, int(item.get("x", 0)) + dx), max(0, world_w - width))
+                        item["y"] = min(max(0, int(item.get("y", 0)) + dy), max(0, world_h - height))
+                        dirty = True
+                        show(f"已移动 {item['map']} 到 ({item['x']}, {item['y']})。Shift+方向键可快速移动。", 2)
+                elif event.key == pygame.K_DELETE:
+                    if selected_placement is not None and selected_placement < len(placements):
+                        removed = placements.pop(selected_placement)
+                        selected_placement = min(selected_placement, len(placements) - 1) if placements else None
+                        dirty = True
+                        show(f"已删除 {removed['map']}。", 3)
                 elif event.key == pygame.K_4:
                     preview_only = not preview_only
                 elif event.key == pygame.K_RETURN and dirty:
@@ -190,34 +320,39 @@ def run_world_editor(screen, font, small, all_meta):
                     card = map_card_at(event.pos)
                     if card is not None:
                         selected = card
+                        selected_placement = None
                         continue
                     cell = world_cell_at(event.pos)
                     if cell is not None and map_names:
+                        existing = placement_at(cell)
+                        if existing is not None:
+                            selected_placement = existing
+                            selected = map_names.index(placements[existing]["map"])
+                            show(f"已选中 {placements[existing]['map']}，使用方向键移动，Delete 删除。", 3)
+                            continue
                         map_name = map_names[selected]
                         spec = all_meta[map_name]
                         size = spec.get("size", [24, 18])
                         map_width, map_height = int(size[0]), int(size[1])
                         x = min(max(0, cell[0]), max(0, world_w - map_width))
                         y = min(max(0, cell[1]), max(0, world_h - map_height))
-                        placements.append({"map": map_name, "x": x, "y": y})
+                        placements.append({"id": new_placement_id(map_name), "map": map_name, "x": x, "y": y})
+                        selected_placement = len(placements) - 1
                         dirty = True
                         show(f"已放置 {map_name}，左键可继续放置，右键删除地图块。")
                 elif event.button == 3:
                     cell = world_cell_at(event.pos)
                     if cell is not None:
-                        for index in range(len(placements) - 1, -1, -1):
-                            item = placements[index]
-                            spec = all_meta.get(item["map"], {})
-                            width, height = map(int, spec.get("size", [24, 18]))
-                            if int(item.get("x", 0)) <= cell[0] < int(item.get("x", 0)) + width and int(item.get("y", 0)) <= cell[1] < int(item.get("y", 0)) + height:
-                                removed = placements.pop(index)
-                                dirty = True
-                                show(f"已移除 {removed['map']}。")
-                                break
+                        existing = placement_at(cell)
+                        if existing is not None:
+                            removed = placements.pop(existing)
+                            selected_placement = min(existing, len(placements) - 1) if placements else None
+                            dirty = True
+                            show(f"已移除 {removed['map']}。")
 
         screen.fill((35, 48, 43))
         screen.blit(font.render("箱庭地图拼接工作区", True, (242, 244, 218)), (18, 28))
-        screen.blit(small.render("选择左侧地图后，左键在右侧放置；右键删除；S 保存并生成整体预览；Esc 返回单地图编辑", True, (190, 210, 190)), (390, 40))
+        screen.blit(small.render("空白处左键放置，点击已有地图后用方向键移动（Shift 加速），Delete 删除；S 保存连接关系；Esc 返回", True, (190, 210, 190)), (390, 40))
         pygame.draw.rect(screen, (20, 30, 28), list_rect, border_radius=8)
         screen.blit(font.render("可用地图", True, (242, 244, 218)), (32, 78))
         for index, map_name in enumerate(map_names):
@@ -234,6 +369,16 @@ def run_world_editor(screen, font, small, all_meta):
         screen.blit(small.render(f"当前选择：{selected_name}", True, (220, 235, 210)), (32, 820))
         screen.blit(font.render(f"箱庭尺寸：{world_w}×{world_h} 格", True, (242, 244, 218)), (390, 860))
         pygame.draw.rect(screen, (180, 210, 175), canvas, 2)
+        # A light grid makes cell alignment visible even when a map has a
+        # transparent layer or a large empty area.
+        grid_step = 1 if view_tile >= 10 else 2
+        for grid_x in range(0, world_w + 1, grid_step):
+            x = canvas.x + grid_x * view_tile
+            pygame.draw.line(screen, (55, 78, 68), (x, canvas.y), (x, canvas.bottom), 1)
+        for grid_y in range(0, world_h + 1, grid_step):
+            y = canvas.y + grid_y * view_tile
+            pygame.draw.line(screen, (55, 78, 68), (canvas.x, y), (canvas.right, y), 1)
+        connections = connection_manifest()["connections"]
         # Draw each placed map as a composited preview plus a colored boundary.
         for index, item in enumerate(placements):
             spec = all_meta.get(item["map"], {})
@@ -246,11 +391,40 @@ def run_world_editor(screen, font, small, all_meta):
             x = canvas.x + int(item.get("x", 0)) * view_tile
             y = canvas.y + int(item.get("y", 0)) * view_tile
             screen.blit(preview, (x, y))
-            pygame.draw.rect(screen, (255, 228, 92) if index == len(placements) - 1 else (112, 178, 150),
+            pygame.draw.rect(screen, (255, 228, 92) if index == selected_placement else (112, 178, 150),
                              (x, y, width * view_tile, height * view_tile), 2)
             if not preview_only:
-                label = small.render(item["map"], True, (255, 250, 190))
+                label = small.render(f"{item['id']}  ({item.get('x', 0)},{item.get('y', 0)})", True, (255, 250, 190))
                 screen.blit(label, (x + 4, y + 3))
+        if not preview_only:
+            # Draw after the map previews so exact joins remain visible.
+            items_by_id = {item["id"]: item for item in placements}
+            for connection in connections:
+                left = items_by_id[connection["from"]]
+                start = connection["world_range"]["start"] * view_tile
+                end = connection["world_range"]["end"] * view_tile
+                if connection["axis"] == "vertical":
+                    edge_x = (int(left.get("x", 0)) + map_size(left["map"])[0]) * view_tile
+                    pygame.draw.line(screen, (90, 235, 242),
+                                     (canvas.x + edge_x, canvas.y + start),
+                                     (canvas.x + edge_x, canvas.y + end), 4)
+                else:
+                    edge_y = (int(left.get("y", 0)) + map_size(left["map"])[1]) * view_tile
+                    pygame.draw.line(screen, (90, 235, 242),
+                                     (canvas.x + start, canvas.y + edge_y),
+                                     (canvas.x + end, canvas.y + edge_y), 4)
+        if selected_placement is not None and selected_placement < len(placements):
+            selected_item = placements[selected_placement]
+            selected_map = selected_item["map"]
+            selected_connections = sum(
+                selected_item["id"] in (link["from"], link["to"])
+                for link in connections
+            )
+            info = (f"已选中：{selected_item['id']}    地图：{selected_map}    "
+                    f"位置：({selected_item.get('x', 0)},{selected_item.get('y', 0)})    "
+                    f"尺寸：{map_size(selected_map)[0]}×{map_size(selected_map)[1]}    "
+                    f"连接：{selected_connections} 条")
+            screen.blit(small.render(info, True, (255, 232, 130)), (390, 870))
         if pygame.time.get_ticks() < notice_until:
             box = pygame.Rect(410, 735, 700, 48)
             pygame.draw.rect(screen, (33, 93, 62), box, border_radius=6)
