@@ -27,6 +27,8 @@ TILESET_CANDIDATES = (
 )
 OUT = ASSETS / "maps"
 MAP_W, MAP_H, TILE = 24, 18, 32
+MAX_MAP_W, MAX_MAP_H = 40, 40
+VIEW_TILE = TILE
 SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
 CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
@@ -78,7 +80,7 @@ def make_font(size: int):
 
 
 def main(name: str):
-    global MAP_W, MAP_H, CANVAS
+    global MAP_W, MAP_H, CANVAS, VIEW_TILE
     pygame.init()
     screen = pygame.display.set_mode(SCREEN)
     pygame.display.set_caption(f"三层地图编辑器 - {name}")
@@ -88,14 +90,21 @@ def main(name: str):
     all_meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     old = all_meta.get(name, {})
     stored_size = old.get("size", [24, 18])
-    MAP_W = max(1, min(24, int(stored_size[0])))
-    MAP_H = max(1, min(18, int(stored_size[1])))
-    CANVAS = pygame.Rect(
-        MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
-        MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
-        MAP_W * TILE,
-        MAP_H * TILE,
-    )
+    MAP_W = max(1, min(MAX_MAP_W, int(stored_size[0])))
+    MAP_H = max(1, min(MAX_MAP_H, int(stored_size[1])))
+
+    def update_canvas():
+        """Fit the editable map into the fixed preview area for large maps."""
+        global CANVAS, VIEW_TILE
+        VIEW_TILE = max(8, min(TILE, MAP_FRAME.width // MAP_W, MAP_FRAME.height // MAP_H))
+        CANVAS = pygame.Rect(
+            MAP_FRAME.x + (MAP_FRAME.width - MAP_W * VIEW_TILE) // 2,
+            MAP_FRAME.y + (MAP_FRAME.height - MAP_H * VIEW_TILE) // 2,
+            MAP_W * VIEW_TILE,
+            MAP_H * VIEW_TILE,
+        )
+
+    update_canvas()
     tiles = load_tiles()
     layers = [load_or_blank(OUT / f"{name}_{layer}.png") for layer in ("lower", "current", "upper")]
     blocked = {tuple(x) for x in old.get("blocked", [])}
@@ -122,7 +131,7 @@ def main(name: str):
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
             return None
-        return ((pos[0] - CANVAS.x) // TILE, (pos[1] - CANVAS.y) // TILE)
+        return ((pos[0] - CANVAS.x) // VIEW_TILE, (pos[1] - CANVAS.y) // VIEW_TILE)
 
     def paint(cell, erase=False):
         nonlocal dirty
@@ -200,8 +209,8 @@ def main(name: str):
         except ValueError:
             show_notice(["宽和高必须是数字，例如 20 14。"], (255, 158, 120), 5)
             return
-        if not (1 <= new_w <= 24 and 1 <= new_h <= 18):
-            show_notice(["当前编辑器支持：宽 1-24 格，高 1-18 格。"], (255, 158, 120), 5)
+        if not (1 <= new_w <= MAX_MAP_W and 1 <= new_h <= MAX_MAP_H):
+            show_notice([f"当前编辑器支持：宽 1-{MAX_MAP_W} 格，高 1-{MAX_MAP_H} 格。"], (255, 158, 120), 5)
             return
         exists = new_name in all_meta or any((OUT / f"{new_name}_{suffix}.png").exists()
                                                for suffix in ("lower", "current", "upper"))
@@ -210,12 +219,7 @@ def main(name: str):
             return
         name = new_name
         MAP_W, MAP_H = new_w, new_h
-        CANVAS = pygame.Rect(
-            MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
-            MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
-            MAP_W * TILE,
-            MAP_H * TILE,
-        )
+        update_canvas()
         layers = [pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA) for _ in range(3)]
         blocked = set()
         start = (0, 0)
@@ -307,15 +311,15 @@ def main(name: str):
             # This is the same three-layer composition used by the game:
             # lower -> current -> upper, without editor overlays.
             for image in layers:
-                screen.blit(image, CANVAS)
+                screen.blit(pygame.transform.scale(image, CANVAS.size), CANVAS)
             return
         for i, image in enumerate(layers):
+            display_image = pygame.transform.scale(image, CANVAS.size)
             if i == layer:
-                screen.blit(image, CANVAS)
+                screen.blit(display_image, CANVAS)
             else:
-                faded = image.copy()
-                faded.set_alpha(72)
-                screen.blit(faded, CANVAS)
+                display_image.set_alpha(72)
+                screen.blit(display_image, CANVAS)
 
         # Highlight every occupied tile in the active layer.  This is an
         # editor-only overlay; exported PNGs remain unchanged.
@@ -326,8 +330,9 @@ def main(name: str):
             for x in range(MAP_W):
                 rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
                 if layers[layer].subsurface(rect).get_bounding_rect().width:
-                    pygame.draw.rect(overlay, (*highlight, 26), rect)
-                    pygame.draw.rect(overlay, (*highlight, 165), rect, 1)
+                    display_rect = pygame.Rect(x * VIEW_TILE, y * VIEW_TILE, VIEW_TILE, VIEW_TILE)
+                    pygame.draw.rect(overlay, (*highlight, 26), display_rect)
+                    pygame.draw.rect(overlay, (*highlight, 165), display_rect, 1)
         screen.blit(overlay, CANVAS)
 
     clock = pygame.time.Clock()
@@ -459,15 +464,19 @@ def main(name: str):
         draw_layer_preview()
         if not preview_mode:
             for x, y in blocked:
-                pygame.draw.rect(screen, (220, 80, 70), (CANVAS.x + x * TILE + 2, CANVAS.y + y * TILE + 2, TILE - 4, TILE - 4), 2)
+                pygame.draw.rect(screen, (220, 80, 70),
+                                 (CANVAS.x + x * VIEW_TILE + 2, CANVAS.y + y * VIEW_TILE + 2,
+                                  max(2, VIEW_TILE - 4), max(2, VIEW_TILE - 4)), 2)
             sx, sy = start
-            pygame.draw.rect(screen, (250, 220, 80), (CANVAS.x + sx * TILE + 5, CANVAS.y + sy * TILE + 5, TILE - 10, TILE - 10), 2)
+            pygame.draw.rect(screen, (250, 220, 80),
+                             (CANVAS.x + sx * VIEW_TILE + 5, CANVAS.y + sy * VIEW_TILE + 5,
+                              max(2, VIEW_TILE - 10), max(2, VIEW_TILE - 10)), 2)
         pygame.draw.rect(screen, (180, 210, 175), CANVAS, 2)
         if not preview_mode and selection_cells is not None:
-            selection_rect = pygame.Rect(CANVAS.x + selection_cells.x * TILE,
-                                         CANVAS.y + selection_cells.y * TILE,
-                                         selection_cells.w * TILE,
-                                         selection_cells.h * TILE)
+            selection_rect = pygame.Rect(CANVAS.x + selection_cells.x * VIEW_TILE,
+                                         CANVAS.y + selection_cells.y * VIEW_TILE,
+                                         selection_cells.w * VIEW_TILE,
+                                         selection_cells.h * VIEW_TILE)
             pygame.draw.rect(screen, (255, 238, 94), selection_rect, 3)
         if mode == "select":
             banner = pygame.Rect(CANVAS.x + 10, CANVAS.y + 10, 410, 38)
@@ -494,11 +503,15 @@ def main(name: str):
             for image in clipboard_layers:
                 preview.blit(image, (0, 0))
             preview.set_alpha(150)
-            px = max(0, min(MAP_W - pw // TILE, paste_origin[0]))
-            py = max(0, min(MAP_H - ph // TILE, paste_origin[1]))
-            screen.blit(preview, (CANVAS.x + px * TILE, CANVAS.y + py * TILE))
+            cell_width = pw // TILE
+            cell_height = ph // TILE
+            px = max(0, min(MAP_W - cell_width, paste_origin[0]))
+            py = max(0, min(MAP_H - cell_height, paste_origin[1]))
+            preview = pygame.transform.scale(preview, (cell_width * VIEW_TILE, cell_height * VIEW_TILE))
+            screen.blit(preview, (CANVAS.x + px * VIEW_TILE, CANVAS.y + py * VIEW_TILE))
             pygame.draw.rect(screen, (255, 238, 94),
-                             (CANVAS.x + px * TILE, CANVAS.y + py * TILE, pw, ph), 3)
+                             (CANVAS.x + px * VIEW_TILE, CANVAS.y + py * VIEW_TILE,
+                              cell_width * VIEW_TILE, cell_height * VIEW_TILE), 3)
 
         # Palette and controls.
         layer_name = '游戏预览' if preview_mode else ('地面' if layer == 0 else '当前' if layer == 1 else '上层')
@@ -561,7 +574,7 @@ def main(name: str):
             dialog_hint = "输入：地图名 宽 高（例如 forest2 20 14）" if is_new_map else f"输入页码：1 到 {page_count}"
             dialog_value = new_map_input if is_new_map else page_input
             dialog_placeholder = "地图名 宽 高" if is_new_map else "页码"
-            dialog_footer = "Enter 创建   Esc 取消   范围：宽 1-24，高 1-18" if is_new_map else "Enter 跳转   Esc 取消"
+            dialog_footer = f"Enter 创建   Esc 取消   范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}" if is_new_map else "Enter 跳转   Esc 取消"
             screen.blit(font.render(dialog_title, True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
             screen.blit(small.render(dialog_hint, True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
             pygame.draw.rect(screen, (12, 25, 22), (dialog.x + 24, dialog.y + 92, dialog.width - 48, 42), border_radius=5)
