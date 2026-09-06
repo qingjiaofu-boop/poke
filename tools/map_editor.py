@@ -41,8 +41,8 @@ NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
 OPEN_BUTTON = pygame.Rect(24, 670, 320, 38)
 WORLD_BUTTON = pygame.Rect(24, 715, 320, 38)
 WORLD_LAYOUT = OUT / "world_layout.json"
-WORLD_DEFAULT_SIZE = (120, 80)
-WORLD_MAX_SIZE = (120, 80)
+WORLD_DEFAULT_SIZE = (120, 120)
+WORLD_MAX_SIZE = (120, 120)
 
 
 def load_tiles():
@@ -116,9 +116,9 @@ def run_world_editor(screen, font, small, all_meta):
         except (OSError, json.JSONDecodeError):
             world_meta = {}
     stored_world_size = world_meta.get("size")
-    # The original workspace used 80×60. Migrate that implicit default to the
-    # larger 120×80 canvas while preserving all existing map coordinates.
-    if not stored_world_size or list(stored_world_size) == [80, 60]:
+    # Migrate older implicit defaults while preserving all existing map
+    # coordinates. The extra rows are available immediately on next save.
+    if not stored_world_size or list(stored_world_size) in ([80, 60], [120, 80]):
         stored_world_size = WORLD_DEFAULT_SIZE
     world_w, world_h = stored_world_size
     world_w = max(1, min(WORLD_MAX_SIZE[0], int(world_w)))
