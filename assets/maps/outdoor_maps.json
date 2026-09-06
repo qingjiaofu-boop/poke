@@ -1,0 +1,125 @@
+{
+  "home": {
+    "size": [
+      24,
+      18
+    ],
+    "start": [
+      6,
+      13
+    ],
+    "blocked": [
+      [
+        18,
+        4
+      ],
+      [
+        3,
+        13
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        19,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        2,
+        13
+      ]
+    ],
+    "layers": {
+      "lower": "maps/home_lower.png",
+      "current": "maps/home_current.png",
+      "upper": "maps/home_upper.png"
+    }
+  },
+  "friend": {
+    "size": [
+      24,
+      18
+    ],
+    "start": [
+      4,
+      10
+    ],
+    "blocked": [
+      [
+        17,
+        7
+      ],
+      [
+        14,
+        3
+      ],
+      [
+        18,
+        7
+      ],
+      [
+        7,
+        6
+      ],
+      [
+        15,
+        3
+      ],
+      [
+        6,
+        6
+      ]
+    ],
+    "layers": {
+      "lower": "maps/friend_lower.png",
+      "current": "maps/friend_current.png",
+      "upper": "maps/friend_upper.png"
+    }
+  },
+  "route": {
+    "size": [
+      24,
+      18
+    ],
+    "start": [
+      11,
+      15
+    ],
+    "blocked": [
+      [
+        4,
+        5
+      ],
+      [
+        3,
+        12
+      ],
+      [
+        17,
+        11
+      ],
+      [
+        18,
+        11
+      ],
+      [
+        4,
+        12
+      ],
+      [
+        3,
+        5
+      ]
+    ],
+    "layers": {
+      "lower": "maps/route_lower.png",
+      "current": "maps/route_current.png",
+      "upper": "maps/route_upper.png"
+    }
+  }
+}
