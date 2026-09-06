@@ -30,6 +30,7 @@ MAP_W, MAP_H, TILE = 24, 18, 32
 SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
 CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
+SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
 
 
 def load_tiles():
@@ -96,6 +97,7 @@ def main(name: str):
     clipboard_layers = None
     clipboard_blocked = set()
     paste_origin = None
+    saved_notice_until = 0
 
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
@@ -120,6 +122,14 @@ def main(name: str):
         left, right = sorted((a[0], b[0]))
         top, bottom = sorted((a[1], b[1]))
         return pygame.Rect(left, top, right - left + 1, bottom - top + 1)
+
+    def enter_select():
+        """Enter visible range-selection mode from a hotkey or toolbar."""
+        nonlocal mode, preview_mode, selection_start, selection_cells
+        preview_mode = False
+        mode = "select"
+        selection_start = None
+        selection_cells = None
 
     def copy_selection():
         """Copy the same rectangular area from all three map layers."""
@@ -163,7 +173,7 @@ def main(name: str):
         dirty = True
 
     def save():
-        nonlocal dirty
+        nonlocal dirty, saved_notice_until
         OUT.mkdir(parents=True, exist_ok=True)
         for i, suffix in enumerate(("lower", "current", "upper")):
             pygame.image.save(layers[i], str(OUT / f"{name}_{suffix}.png"))
@@ -175,6 +185,7 @@ def main(name: str):
         }
         meta_path.write_text(json.dumps(all_meta, ensure_ascii=False, indent=2), encoding="utf-8")
         dirty = False
+        saved_notice_until = pygame.time.get_ticks() + 5000
 
     def draw_layer_preview():
         """Show the active layer clearly and fade the other two layers."""
@@ -215,10 +226,8 @@ def main(name: str):
                     running = False
                 elif event.key == pygame.K_s:
                     save()
-                elif event.key == pygame.K_m:
-                    mode = "select"
-                    selection_start = None
-                    selection_cells = None
+                elif event.key == pygame.K_m or getattr(event, "unicode", "").lower() == "m":
+                    enter_select()
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -245,10 +254,15 @@ def main(name: str):
                     palette_page += 1
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button in (1, 3):
+                    if event.button == 1 and SELECT_BUTTON.collidepoint(event.pos):
+                        enter_select()
+                        continue
                     cell = cell_at(event.pos)
                     if preview_mode:
                         continue
-                    if mode == "select" and cell is not None and event.button == 1:
+                    if event.button == 1 and (mode == "select" or pygame.key.get_mods() & pygame.KMOD_SHIFT) and cell is not None:
+                        if mode != "select":
+                            enter_select()
                         selection_start = cell
                         selection_cells = pygame.Rect(cell[0], cell[1], 1, 1)
                     elif mode == "paste" and cell is not None and event.button == 1:
@@ -302,6 +316,23 @@ def main(name: str):
                                          selection_cells.w * TILE,
                                          selection_cells.h * TILE)
             pygame.draw.rect(screen, (255, 238, 94), selection_rect, 3)
+        if mode == "select":
+            banner = pygame.Rect(CANVAS.x + 10, CANVAS.y + 10, 410, 38)
+            pygame.draw.rect(screen, (28, 68, 62), banner, border_radius=5)
+            pygame.draw.rect(screen, (255, 228, 92), banner, 2, border_radius=5)
+            screen.blit(font.render("框选模式：按住左键拖出复制范围", True, (255, 243, 180)), (banner.x + 12, banner.y + 8))
+        elif mode == "selected" and selection_cells is not None:
+            banner = pygame.Rect(CANVAS.x + 10, CANVAS.y + 10, 380, 38)
+            pygame.draw.rect(screen, (28, 68, 62), banner, border_radius=5)
+            pygame.draw.rect(screen, (255, 228, 92), banner, 2, border_radius=5)
+            screen.blit(font.render("已框选：按 Ctrl+C 复制三层内容", True, (255, 243, 180)), (banner.x + 12, banner.y + 8))
+        if pygame.time.get_ticks() < saved_notice_until:
+            notice = pygame.Rect(CANVAS.x + 10, CANVAS.bottom - 90, CANVAS.width - 20, 78)
+            pygame.draw.rect(screen, (33, 93, 62), notice, border_radius=6)
+            pygame.draw.rect(screen, (142, 230, 151), notice, 2, border_radius=6)
+            screen.blit(font.render("地图已保存", True, (232, 255, 218)), (notice.x + 14, notice.y + 8))
+            screen.blit(small.render(f"assets/maps/{name}_lower.png  |  {name}_current.png  |  {name}_upper.png", True, (225, 244, 219)), (notice.x + 14, notice.y + 32))
+            screen.blit(small.render("配置文件：assets/maps/outdoor_maps.json", True, (225, 244, 219)), (notice.x + 14, notice.y + 48))
         if not preview_mode and mode == "paste" and paste_origin is not None and clipboard_layers is not None:
             pw = clipboard_layers[0].get_width()
             ph = clipboard_layers[0].get_height()
@@ -335,7 +366,7 @@ def main(name: str):
         screen.blit(small.render(f"图块编号：{tile_index}   页面：{palette_page}（←/→翻页）", True, (205, 220, 198)), (24, 290))
         screen.blit(small.render("C：碰撞标记模式（仅当前层）", True, (205, 220, 198)), (24, 326))
         screen.blit(small.render("P：设置出生点（点击地图格）", True, (205, 220, 198)), (24, 351))
-        screen.blit(small.render("M：框选三层，Ctrl+C复制，Ctrl+V后连续点击粘贴", True, (205, 220, 198)), (24, 375))
+        screen.blit(small.render("M 或按钮：框选；Shift+左键拖动也可直接框选", True, (205, 220, 198)), (24, 375))
         screen.blit(small.render("4：查看游戏最终合成画面，再按 1/2/3 返回编辑", True, (205, 220, 198)), (24, 398))
         status = f"模式：{mode}" + (" *未保存" if dirty else "")
         screen.blit(font.render(status, True, (238, 194, 117)), (24, 435))
@@ -344,8 +375,12 @@ def main(name: str):
         else:
             screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 460))
             screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
-        screen.blit(small.render("建议：地面层铺草地/道路，当前层放花草水边，", True, (175, 196, 175)), (24, 490))
-        screen.blit(small.render("上层放树冠；上层不会阻挡角色。", True, (175, 196, 175)), (24, 515))
+        pygame.draw.rect(screen, (61, 109, 87) if mode == "select" else (48, 74, 64), SELECT_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if mode == "select" else (137, 171, 139), SELECT_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("框选工具  [M]", True, (245, 246, 219)), (SELECT_BUTTON.x + 84, SELECT_BUTTON.y + 8))
+        screen.blit(small.render("框选后：Ctrl+C 复制，Ctrl+V 连续粘贴", True, (175, 196, 175)), (24, 590))
+        screen.blit(small.render("建议：地面层铺草地/道路，当前层放花草水边，", True, (175, 196, 175)), (24, 620))
+        screen.blit(small.render("上层放树冠；上层不会阻挡角色。", True, (175, 196, 175)), (24, 645))
         pygame.display.flip()
         clock.tick(60)
     if dirty:
