@@ -11,6 +11,7 @@ besides pygame (which the game already uses).
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -25,36 +26,111 @@ TILESET_CANDIDATES = (
     ASSETS / "Outside.png",
     Path(r"E:\123pan\Downloads\Pokemon Essentials v20.1\Graphics\Tilesets\Outside.png"),
 )
+
+# 图块集列表。kind="sheet" 表示一整张 32×32 网格图（按宽高切列）；
+# kind="dir" 表示一个目录里若干张独立的 32×32 PNG（按文件名自然排序加载）。
+# 想再增加自己的图块集，只需往这里加一项。
+TILE_SOURCES = (
+    {"name": "Outside", "kind": "sheet", "paths": TILESET_CANDIDATES},
+    {"name": "Cave", "kind": "dir", "path": ASSETS / "cave"},
+)
+
 OUT = ASSETS / "maps"
 MAP_W, MAP_H, TILE = 24, 18, 32
+# 地图宽高上限（格）。超出视口(768×576) 的地图会启用相机滚动编辑。
+MAX_MAP_W, MAX_MAP_H = 40, 40
 SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
-CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
 MAP_FRAME = pygame.Rect(400, 78, 768, 576)
+SOURCE_BUTTON = pygame.Rect(8, 28, 384, 40)
 PAGE_BUTTON = pygame.Rect(24, 306, 320, 30)
 SAVE_BUTTON = pygame.Rect(24, 502, 320, 31)
 SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
 PASTE_BUTTON = pygame.Rect(24, 580, 320, 38)
-NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
+NEW_BUTTON = pygame.Rect(24, 625, 152, 38)
+RESIZE_BUTTON = pygame.Rect(192, 625, 152, 38)
+OPEN_BUTTON = pygame.Rect(24, 666, 320, 28)
+OPEN_DIALOG = pygame.Rect(430, 150, 700, 420)
+OPEN_VISIBLE = 8
 
 
-def load_tiles():
-    source = next((path for path in TILESET_CANDIDATES if path.exists()), None)
+def _natural_key(name):
+    """文件名自然排序：Caves_2 排在 Caves_10 之前。"""
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", name)]
+
+
+def _load_dir(directory):
+    """读取目录里所有 PNG，每个当做一个 32×32 图块。"""
+    tiles = []
+    for path in sorted(directory.glob("*.png"), key=lambda p: _natural_key(p.name)):
+        image = pygame.image.load(str(path)).convert_alpha()
+        if image.get_size() != (TILE, TILE):
+            image = pygame.transform.smoothscale(image, (TILE, TILE))
+        tiles.append(image.copy())
+    return tiles
+
+
+def _load_sheet(paths):
+    """从一整张 32×32 网格图切出所有图块，按实际宽高算列数。"""
+    source = next((path for path in paths if path.exists()), None)
     if source is None:
-        raise FileNotFoundError("找不到 Outside.png，请确认 assets/Outside.png 存在")
+        return []
     image = pygame.image.load(str(source)).convert_alpha()
-    count = image.get_height() // TILE
+    cols = image.get_width() // TILE
+    rows = image.get_height() // TILE
     return [image.subsurface((x * TILE, y * TILE, TILE, TILE)).copy()
-            for y in range(count) for x in range(8)]
+            for y in range(rows) for x in range(cols)]
 
 
-def load_or_blank(path: Path):
+def load_tiles(source):
+    """按图块集定义加载 tile：目录 -> 逐张 PNG；否则 -> 整张图切列。"""
+    if source["kind"] == "dir":
+        return _load_dir(source["path"])
+    return _load_sheet(source["paths"])
+
+
+def resolve_size(name, old_meta):
+    """确定地图尺寸(格)。
+
+    优先用 json 里的 size；缺失或非法时按实际 PNG 尺寸探测（并钳制到上限）。
+    这样即使 json 与 PNG 不同步，也不会用默认尺寸去加载一张更大/更小的图。
+    """
+    size = old_meta.get("size")
+    if isinstance(size, (list, tuple)) and len(size) == 2:
+        try:
+            w, h = int(size[0]), int(size[1])
+            if 1 <= w <= MAX_MAP_W and 1 <= h <= MAX_MAP_H:
+                return w, h
+        except (TypeError, ValueError):
+            pass
+    for suffix in ("lower", "current", "upper"):
+        p = OUT / f"{name}_{suffix}.png"
+        if p.exists():
+            try:
+                image = pygame.image.load(str(p))
+                w = max(1, min(MAX_MAP_W, image.get_width() // TILE))
+                h = max(1, min(MAX_MAP_H, image.get_height() // TILE))
+                return w, h
+            except pygame.error:
+                continue
+    return 24, 18
+
+
+def load_layer(path, tile_w, tile_h):
+    """加载一层 PNG 并归一化到 tile_w×tile_h。
+
+    缺文件或偏小时用透明补齐，偏大时裁剪，保证返回的 Surface 一定是目标尺寸，
+    后续绘制/碰撞高亮的 subsurface 就不会越界崩溃。
+    """
+    surface = pygame.Surface((tile_w * TILE, tile_h * TILE), pygame.SRCALPHA)
     if path.exists():
         try:
-            return pygame.image.load(str(path)).convert_alpha()
+            image = pygame.image.load(str(path)).convert_alpha()
+            surface.blit(image, (0, 0))
         except pygame.error:
             pass
-    return pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA)
+    return surface
 
 
 def make_font(size: int):
@@ -77,8 +153,34 @@ def make_font(size: int):
     return pygame.font.Font(None, size)
 
 
+def _event_char(event):
+    """返回按键对应的可打印字符。
+
+    对话框输入原来只依赖 ``event.unicode``，在部分系统/输入法下该字段为空，
+    导致无法打字。这里在 unicode 缺失时退化为按 ``event.key`` 映射常用 ASCII
+    字符（字母/数字/空格/减号/下划线/点）。
+    """
+    ch = getattr(event, "unicode", "")
+    if ch and ch.isprintable():
+        return ch
+    key = event.key
+    shift = bool(event.mod & pygame.KMOD_SHIFT)
+    if pygame.K_a <= key <= pygame.K_z:
+        base = ord("a") + (key - pygame.K_a)
+        return chr(base - 32) if shift else chr(base)
+    if pygame.K_0 <= key <= pygame.K_9:
+        return chr(ord("0") + (key - pygame.K_0))
+    if key == pygame.K_SPACE:
+        return " "
+    if key == pygame.K_MINUS:
+        return "_" if shift else "-"
+    if key == pygame.K_PERIOD:
+        return "."
+    return ""
+
+
 def main(name: str):
-    global MAP_W, MAP_H, CANVAS
+    global MAP_W, MAP_H
     pygame.init()
     screen = pygame.display.set_mode(SCREEN)
     pygame.display.set_caption(f"三层地图编辑器 - {name}")
@@ -87,19 +189,16 @@ def main(name: str):
     meta_path = OUT / "outdoor_maps.json"
     all_meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     old = all_meta.get(name, {})
-    stored_size = old.get("size", [24, 18])
-    MAP_W = max(1, min(24, int(stored_size[0])))
-    MAP_H = max(1, min(18, int(stored_size[1])))
-    CANVAS = pygame.Rect(
-        MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
-        MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
-        MAP_W * TILE,
-        MAP_H * TILE,
-    )
-    tiles = load_tiles()
-    layers = [load_or_blank(OUT / f"{name}_{layer}.png") for layer in ("lower", "current", "upper")]
-    blocked = {tuple(x) for x in old.get("blocked", [])}
-    start = tuple(old.get("start", [1, 1]))
+    MAP_W, MAP_H = resolve_size(name, old)
+    tiles = load_tiles(TILE_SOURCES[0])
+    if not tiles:
+        raise FileNotFoundError("找不到图块：请确认 assets/Outside.png 或 assets/cave 内存在 32×32 PNG")
+    source_index = 0
+    layers = [load_layer(OUT / f"{name}_{s}.png", MAP_W, MAP_H) for s in ("lower", "current", "upper")]
+    blocked = {(x, y) for x, y in ({tuple(c) for c in old.get("blocked", [])}) if x < MAP_W and y < MAP_H}
+    start = tuple(old.get("start", [0, 0]))
+    if not (0 <= start[0] < MAP_W and 0 <= start[1] < MAP_H):
+        start = (0, 0)
     layer = 0
     tile_index = 1
     palette_page = 0
@@ -118,11 +217,62 @@ def main(name: str):
     dialog_mode = None
     new_map_input = ""
     page_input = ""
+    resize_input = ""
+    open_list = []
+    open_cursor = 0
+    open_scroll = 0
+    # 相机（视口）状态：cam 为地图像素偏移，origin/view 为屏上显示位置与可见尺寸。
+    cam_x, cam_y = 0, 0
+    origin_x, origin_y = MAP_FRAME.x, MAP_FRAME.y
+    view_w, view_h = MAP_W * TILE, MAP_H * TILE
+    SCROLL = 64
+
+    def update_camera():
+        """按地图大小重算视口：太小则居中(不滚动)，太大则从左上角滚动。"""
+        nonlocal cam_x, cam_y, origin_x, origin_y, view_w, view_h
+        px_w = MAP_W * TILE
+        px_h = MAP_H * TILE
+        view_w = min(px_w, MAP_FRAME.width)
+        view_h = min(px_h, MAP_FRAME.height)
+        if px_w <= MAP_FRAME.width:
+            origin_x = MAP_FRAME.x + (MAP_FRAME.width - px_w) // 2
+            cam_x = 0
+        else:
+            origin_x = MAP_FRAME.x
+            cam_x = max(0, min(cam_x, px_w - view_w))
+        if px_h <= MAP_FRAME.height:
+            origin_y = MAP_FRAME.y + (MAP_FRAME.height - px_h) // 2
+            cam_y = 0
+        else:
+            origin_y = MAP_FRAME.y
+            cam_y = max(0, min(cam_y, px_h - view_h))
+
+    def pan(dx, dy):
+        nonlocal cam_x, cam_y
+        cam_x += dx
+        cam_y += dy
+        update_camera()
+
+    def blit_layer_view(image):
+        """把整张地图图层的可见区域画到视口，并裁剪在 MAP_FRAME 内。"""
+        screen.set_clip(MAP_FRAME)
+        screen.blit(image, (origin_x, origin_y), area=pygame.Rect(cam_x, cam_y, view_w, view_h))
+        screen.set_clip(None)
+
+    def map_rect(mx, my, mw, mh):
+        """把地图像素矩形换算成屏幕坐标矩形。"""
+        return pygame.Rect(origin_x + mx - cam_x, origin_y + my - cam_y, mw, mh)
 
     def cell_at(pos):
-        if not CANVAS.collidepoint(pos):
+        # 只允许在视口(MAP_FRAME)内取格，避免地图滚动后，点左侧资源区
+        # 被误判为地图坐标（cam 偏移会让资源区坐标也算出合法的地图格）。
+        if not MAP_FRAME.collidepoint(pos):
             return None
-        return ((pos[0] - CANVAS.x) // TILE, (pos[1] - CANVAS.y) // TILE)
+        mx = pos[0] - origin_x + cam_x
+        my = pos[1] - origin_y + cam_y
+        if not (0 <= mx < MAP_W * TILE and 0 <= my < MAP_H * TILE):
+            return None
+        return (mx // TILE, my // TILE)
 
     def paint(cell, erase=False):
         nonlocal dirty
@@ -158,6 +308,30 @@ def main(name: str):
         notice_color = color
         notice_until = pygame.time.get_ticks() + seconds * 1000
 
+    def switch_source():
+        """按 T / 点击按钮在 TILE_SOURCES 之间切换图块集。"""
+        nonlocal source_index, tiles, tile_index, palette_page
+        nonlocal mode, preview_mode, selection_start, selection_cells
+        nxt = (source_index + 1) % len(TILE_SOURCES)
+        new_tiles = load_tiles(TILE_SOURCES[nxt])
+        if not new_tiles:
+            show_notice([f"图块集 {TILE_SOURCES[nxt]['name']} 为空或找不到，未切换。"], (255, 158, 120), 5)
+            return
+        source_index = nxt
+        tiles = new_tiles
+        tile_index = 1
+        palette_page = 0
+        preview_mode = False
+        mode = "paint"
+        selection_start = None
+        selection_cells = None
+        show_notice(
+            [f"已切换到图块集：{TILE_SOURCES[source_index]['name']}",
+             f"共 {len(tiles)} 个 32×32 图块。按 1/2/3 切层后绘制。"],
+            (142, 230, 151),
+            5,
+        )
+
     def enter_new_map():
         nonlocal dialog_mode, new_map_input
         dialog_mode = "new"
@@ -167,6 +341,110 @@ def main(name: str):
         nonlocal dialog_mode, page_input
         dialog_mode = "page"
         page_input = ""
+
+    def list_maps():
+        """列出所有可打开的地图名（json 配置 + 目录里的 *_lower.png 都算）。"""
+        names = set(all_meta.keys())
+        for p in OUT.glob("*_lower.png"):
+            if p.stem.endswith("_lower"):
+                names.add(p.stem[:-len("_lower")])
+        return sorted(names)
+
+    def enter_open():
+        nonlocal dialog_mode, open_list, open_cursor, open_scroll
+        open_list = list_maps()
+        if not open_list:
+            show_notice(["没有可打开的地图。"], (255, 158, 120), 4)
+            return
+        open_cursor = open_list.index(name) if name in open_list else 0
+        open_scroll = 0
+        dialog_mode = "open"
+
+    def open_map(target):
+        """切换到已有地图（先自动保存当前未保存的修改）。"""
+        nonlocal name, layers, blocked, start, dialog_mode, dirty
+        nonlocal cam_x, cam_y, mode, preview_mode
+        nonlocal selection_start, selection_cells, clipboard_layers, clipboard_blocked, paste_origin
+        global MAP_W, MAP_H
+        if target not in list_maps():
+            show_notice([f"地图 {target} 不存在。"], (255, 158, 120), 4)
+            return
+        if dirty:
+            save(silent=True)
+        name = target
+        old = all_meta.get(target, {})
+        MAP_W, MAP_H = resolve_size(target, old)
+        layers = [load_layer(OUT / f"{target}_{s}.png", MAP_W, MAP_H) for s in ("lower", "current", "upper")]
+        blocked = {(x, y) for x, y in ({tuple(c) for c in old.get("blocked", [])}) if x < MAP_W and y < MAP_H}
+        start = tuple(old.get("start", [0, 0]))
+        if not (0 <= start[0] < MAP_W and 0 <= start[1] < MAP_H):
+            start = (0, 0)
+        cam_x, cam_y = 0, 0
+        update_camera()
+        mode, preview_mode = "paint", False
+        selection_start = None
+        selection_cells = None
+        clipboard_layers = None
+        clipboard_blocked = set()
+        paste_origin = None
+        dirty = False
+        dialog_mode = None
+        pygame.display.set_caption(f"三层地图编辑器 - {name}")
+        show_notice([f"已打开地图：{name}（{MAP_W}×{MAP_H} 格）"], (142, 230, 151), 4)
+
+    def open_row_rect(i):
+        """打开对话框里第 i 个地图项的屏幕矩形（按滚动偏移换算）。"""
+        rel = i - open_scroll
+        return pygame.Rect(OPEN_DIALOG.x + 24, OPEN_DIALOG.y + 74 + rel * 34, OPEN_DIALOG.width - 48, 30)
+
+    def enter_resize():
+        nonlocal dialog_mode, resize_input
+        dialog_mode = "resize"
+        resize_input = f"{MAP_W} {MAP_H}"
+
+    def resize_map():
+        """调整当前地图尺寸：内容保留在左上角，新区域留空，越界内容丢弃。"""
+        nonlocal layers, blocked, start, dialog_mode, resize_input, dirty
+        nonlocal cam_x, cam_y
+        global MAP_W, MAP_H
+        parts = resize_input.strip().split()
+        if len(parts) != 2:
+            show_notice(["格式应为：新宽 新高，例如 40 30。"], (255, 158, 120), 5)
+            return
+        try:
+            new_w, new_h = int(parts[0]), int(parts[1])
+        except ValueError:
+            show_notice(["宽和高必须是数字，例如 40 30。"], (255, 158, 120), 5)
+            return
+        if not (1 <= new_w <= MAX_MAP_W and 1 <= new_h <= MAX_MAP_H):
+            show_notice([f"尺寸范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}。"], (255, 158, 120), 5)
+            return
+        if (new_w, new_h) == (MAP_W, MAP_H):
+            dialog_mode = None
+            show_notice(["尺寸没有变化。"], (255, 158, 120), 3)
+            return
+        old_w, old_h = MAP_W, MAP_H
+        new_layers = []
+        for surface in layers:
+            ns = pygame.Surface((new_w * TILE, new_h * TILE), pygame.SRCALPHA)
+            ns.blit(surface, (0, 0))
+            new_layers.append(ns)
+        layers = new_layers
+        blocked = {(x, y) for x, y in blocked if x < new_w and y < new_h}
+        if start[0] >= new_w or start[1] >= new_h:
+            start = (0, 0)
+        MAP_W, MAP_H = new_w, new_h
+        cam_x, cam_y = 0, 0
+        update_camera()
+        dirty = True
+        dialog_mode = None
+        resize_input = ""
+        show_notice(
+            [f"地图已调整为 {new_w}×{new_h} 格（原 {old_w}×{old_h}）",
+             "内容保留在左上角，新区域为空；Ctrl+S 保存。"],
+            (142, 230, 151),
+            5,
+        )
 
     def change_palette_page():
         nonlocal dialog_mode, page_input, palette_page
@@ -186,7 +464,8 @@ def main(name: str):
 
     def create_new_map():
         nonlocal name, layers, blocked, start, dialog_mode, new_map_input
-        global MAP_W, MAP_H, CANVAS
+        nonlocal cam_x, cam_y
+        global MAP_W, MAP_H
         parts = new_map_input.strip().split()
         if len(parts) != 3:
             show_notice(["格式应为：地图名 宽 高，例如 forest2 20 14。"], (255, 158, 120), 5)
@@ -200,8 +479,8 @@ def main(name: str):
         except ValueError:
             show_notice(["宽和高必须是数字，例如 20 14。"], (255, 158, 120), 5)
             return
-        if not (1 <= new_w <= 24 and 1 <= new_h <= 18):
-            show_notice(["当前编辑器支持：宽 1-24 格，高 1-18 格。"], (255, 158, 120), 5)
+        if not (1 <= new_w <= MAX_MAP_W and 1 <= new_h <= MAX_MAP_H):
+            show_notice([f"当前编辑器支持：宽 1-{MAX_MAP_W} 格，高 1-{MAX_MAP_H} 格。"], (255, 158, 120), 5)
             return
         exists = new_name in all_meta or any((OUT / f"{new_name}_{suffix}.png").exists()
                                                for suffix in ("lower", "current", "upper"))
@@ -210,12 +489,8 @@ def main(name: str):
             return
         name = new_name
         MAP_W, MAP_H = new_w, new_h
-        CANVAS = pygame.Rect(
-            MAP_FRAME.x + (MAP_FRAME.width - MAP_W * TILE) // 2,
-            MAP_FRAME.y + (MAP_FRAME.height - MAP_H * TILE) // 2,
-            MAP_W * TILE,
-            MAP_H * TILE,
-        )
+        cam_x, cam_y = 0, 0
+        update_camera()
         layers = [pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA) for _ in range(3)]
         blocked = set()
         start = (0, 0)
@@ -282,7 +557,7 @@ def main(name: str):
         dirty = True
         show_notice([f"已粘贴 {width} × {height} 格，三层与碰撞已同步。", "仍处于连续粘贴模式，可继续点击放置。"], (142, 230, 151))
 
-    def save():
+    def save(silent=False):
         nonlocal dirty
         OUT.mkdir(parents=True, exist_ok=True)
         for i, suffix in enumerate(("lower", "current", "upper")):
@@ -295,11 +570,12 @@ def main(name: str):
         }
         meta_path.write_text(json.dumps(all_meta, ensure_ascii=False, indent=2), encoding="utf-8")
         dirty = False
-        show_notice(
-            ["地图已保存", f"assets/maps/{name}_lower.png  |  {name}_current.png  |  {name}_upper.png", "配置文件：assets/maps/outdoor_maps.json"],
-            (142, 230, 151),
-            5,
-        )
+        if not silent:
+            show_notice(
+                ["地图已保存", f"assets/maps/{name}_lower.png  |  {name}_current.png  |  {name}_upper.png", "配置文件：assets/maps/outdoor_maps.json"],
+                (142, 230, 151),
+                5,
+            )
 
     def draw_layer_preview():
         """Show the active layer clearly and fade the other two layers."""
@@ -307,20 +583,20 @@ def main(name: str):
             # This is the same three-layer composition used by the game:
             # lower -> current -> upper, without editor overlays.
             for image in layers:
-                screen.blit(image, CANVAS)
+                blit_layer_view(image)
             return
         for i, image in enumerate(layers):
             if i == layer:
-                screen.blit(image, CANVAS)
+                blit_layer_view(image)
             else:
                 faded = image.copy()
                 faded.set_alpha(72)
-                screen.blit(faded, CANVAS)
+                blit_layer_view(faded)
 
         # Highlight every occupied tile in the active layer.  This is an
         # editor-only overlay; exported PNGs remain unchanged.
         colors = ((92, 210, 255), (255, 190, 75), (205, 145, 255))
-        overlay = pygame.Surface(CANVAS.size, pygame.SRCALPHA)
+        overlay = pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA)
         highlight = colors[layer]
         for y in range(MAP_H):
             for x in range(MAP_W):
@@ -328,7 +604,7 @@ def main(name: str):
                 if layers[layer].subsurface(rect).get_bounding_rect().width:
                     pygame.draw.rect(overlay, (*highlight, 26), rect)
                     pygame.draw.rect(overlay, (*highlight, 165), rect, 1)
-        screen.blit(overlay, CANVAS)
+        blit_layer_view(overlay)
 
     clock = pygame.time.Clock()
     while running:
@@ -336,37 +612,67 @@ def main(name: str):
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
+                if dialog_mode == "open":
+                    if event.key == pygame.K_ESCAPE:
+                        dialog_mode = None
+                    elif event.key == pygame.K_UP:
+                        open_cursor = (open_cursor - 1) % len(open_list)
+                    elif event.key == pygame.K_DOWN:
+                        open_cursor = (open_cursor + 1) % len(open_list)
+                    elif event.key == pygame.K_PAGEUP:
+                        open_cursor = max(0, open_cursor - OPEN_VISIBLE)
+                    elif event.key == pygame.K_PAGEDOWN:
+                        open_cursor = min(len(open_list) - 1, open_cursor + OPEN_VISIBLE)
+                    elif event.key == pygame.K_RETURN:
+                        if open_list:
+                            open_map(open_list[open_cursor])
+                    continue
                 if dialog_mode:
                     if event.key == pygame.K_ESCAPE:
                         dialog_mode = None
                         new_map_input = ""
                         page_input = ""
+                        resize_input = ""
                     elif event.key == pygame.K_RETURN:
                         if dialog_mode == "new":
                             create_new_map()
-                        else:
+                        elif dialog_mode == "page":
                             change_palette_page()
+                        else:
+                            resize_map()
                     elif event.key == pygame.K_BACKSPACE:
                         if dialog_mode == "new":
                             new_map_input = new_map_input[:-1]
-                        else:
+                        elif dialog_mode == "page":
                             page_input = page_input[:-1]
-                    elif getattr(event, "unicode", "").isprintable():
-                        if dialog_mode == "new":
-                            new_map_input += event.unicode
                         else:
-                            page_input += event.unicode
+                            resize_input = resize_input[:-1]
+                    else:
+                        ch = _event_char(event)
+                        if ch:
+                            if dialog_mode == "new":
+                                new_map_input += ch
+                            elif dialog_mode == "page":
+                                page_input += ch
+                            else:
+                                resize_input += ch
                     continue
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_s:
-                    save()
+                elif event.key == pygame.K_t:
+                    switch_source()
+                elif event.key == pygame.K_o:
+                    enter_open()
                 elif event.key == pygame.K_m or getattr(event, "unicode", "").lower() == "m":
                     enter_select()
                 elif event.key == pygame.K_n:
                     enter_new_map()
+                elif event.key == pygame.K_e:
+                    enter_resize()
                 elif event.key == pygame.K_g:
                     enter_page_jump()
+                elif event.key == pygame.K_s and (event.mod & pygame.KMOD_CTRL):
+                    save()
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -391,7 +697,35 @@ def main(name: str):
                     palette_page = max(0, palette_page - 1)
                 elif event.key == pygame.K_PAGEDOWN:
                     palette_page = min(max(0, (len(tiles) + 31) // 32 - 1), palette_page + 1)
+                elif event.key == pygame.K_w:
+                    pan(0, -SCROLL)
+                elif event.key == pygame.K_s:
+                    pan(0, SCROLL)
+                elif event.key == pygame.K_a:
+                    pan(-SCROLL, 0)
+                elif event.key == pygame.K_d:
+                    pan(SCROLL, 0)
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                # 打开对话框：滚轮滚动列表、左键点选地图。
+                if dialog_mode == "open":
+                    if event.button == 4:
+                        open_cursor = max(0, open_cursor - 1)
+                    elif event.button == 5:
+                        open_cursor = min(len(open_list) - 1, open_cursor + 1)
+                    elif event.button == 1:
+                        for i in range(len(open_list)):
+                            if 0 <= i - open_scroll < OPEN_VISIBLE and open_row_rect(i).collidepoint(event.pos):
+                                open_map(open_list[i])
+                                break
+                    continue
+                # 滚轮：前进/后退=上下，按钮4/5；左右用按钮6/7（如支持）。
+                if event.button in (4, 5, 6, 7):
+                    if dialog_mode:
+                        continue
+                    dx = -SCROLL if event.button == 6 else (SCROLL if event.button == 7 else 0)
+                    dy = -SCROLL if event.button == 4 else (SCROLL if event.button == 5 else 0)
+                    pan(dx, dy)
+                    continue
                 if event.button in (1, 3):
                     if dialog_mode:
                         continue
@@ -410,6 +744,26 @@ def main(name: str):
                     if event.button == 1 and NEW_BUTTON.collidepoint(event.pos):
                         enter_new_map()
                         continue
+                    if event.button == 1 and RESIZE_BUTTON.collidepoint(event.pos):
+                        enter_resize()
+                        continue
+                    if event.button == 1 and OPEN_BUTTON.collidepoint(event.pos):
+                        enter_open()
+                        continue
+                    if event.button == 1 and SOURCE_BUTTON.collidepoint(event.pos):
+                        switch_source()
+                        continue
+                    # 左侧资源区选图块：预览模式下也允许，避免"按了 4 后点不了图块"。
+                    if event.button == 1:
+                        palette = pygame.Rect(24, 110, 8 * 40, 4 * 40)
+                        if palette.collidepoint(event.pos):
+                            px, py = event.pos
+                            col = (px - palette.x) // 40
+                            row = (py - palette.y) // 40
+                            candidate = palette_page * 32 + row * 8 + col
+                            if candidate < len(tiles):
+                                tile_index = candidate
+                            continue
                     cell = cell_at(event.pos)
                     if preview_mode:
                         continue
@@ -429,15 +783,6 @@ def main(name: str):
                         dirty = True
                     elif cell is not None:
                         paint(cell, erase=event.button == 3)
-                    else:
-                        px, py = event.pos
-                        palette = pygame.Rect(24, 110, 8 * 40, 4 * 40)
-                        if palette.collidepoint(event.pos):
-                            col = (px - palette.x) // 40
-                            row = (py - palette.y) // 40
-                            candidate = palette_page * 32 + row * 8 + col
-                            if candidate < len(tiles):
-                                tile_index = candidate
             elif event.type == pygame.MOUSEMOTION:
                 cell = cell_at(event.pos)
                 if mode == "select" and selection_start is not None and cell is not None and event.buttons[0]:
@@ -455,33 +800,38 @@ def main(name: str):
                         mode = "selected"
 
         screen.fill((35, 48, 43))
+        # Recompute the camera each frame (handles map resize and clamping).
+        update_camera()
         # Map preview with active-layer focus.
         draw_layer_preview()
         if not preview_mode:
+            screen.set_clip(MAP_FRAME)
             for x, y in blocked:
-                pygame.draw.rect(screen, (220, 80, 70), (CANVAS.x + x * TILE + 2, CANVAS.y + y * TILE + 2, TILE - 4, TILE - 4), 2)
+                r = map_rect(x * TILE, y * TILE, TILE, TILE)
+                pygame.draw.rect(screen, (220, 80, 70), (r.x + 2, r.y + 2, TILE - 4, TILE - 4), 2)
             sx, sy = start
-            pygame.draw.rect(screen, (250, 220, 80), (CANVAS.x + sx * TILE + 5, CANVAS.y + sy * TILE + 5, TILE - 10, TILE - 10), 2)
-        pygame.draw.rect(screen, (180, 210, 175), CANVAS, 2)
-        if not preview_mode and selection_cells is not None:
-            selection_rect = pygame.Rect(CANVAS.x + selection_cells.x * TILE,
-                                         CANVAS.y + selection_cells.y * TILE,
-                                         selection_cells.w * TILE,
-                                         selection_cells.h * TILE)
-            pygame.draw.rect(screen, (255, 238, 94), selection_rect, 3)
+            r = map_rect(sx * TILE, sy * TILE, TILE, TILE)
+            pygame.draw.rect(screen, (250, 220, 80), (r.x + 5, r.y + 5, TILE - 10, TILE - 10), 2)
+            if selection_cells is not None:
+                rr = map_rect(selection_cells.x * TILE, selection_cells.y * TILE,
+                              selection_cells.w * TILE, selection_cells.h * TILE)
+                pygame.draw.rect(screen, (255, 238, 94), rr, 3)
+            screen.set_clip(None)
+        # 视口边框（大图滚动时的窗口边界；小图即整张地图边界）。
+        pygame.draw.rect(screen, (180, 210, 175), MAP_FRAME, 2)
         if mode == "select":
-            banner = pygame.Rect(CANVAS.x + 10, CANVAS.y + 10, 410, 38)
+            banner = pygame.Rect(MAP_FRAME.x + 10, MAP_FRAME.y + 10, 410, 38)
             pygame.draw.rect(screen, (28, 68, 62), banner, border_radius=5)
             pygame.draw.rect(screen, (255, 228, 92), banner, 2, border_radius=5)
             screen.blit(font.render("框选模式：按住左键拖出复制范围", True, (255, 243, 180)), (banner.x + 12, banner.y + 8))
         elif mode == "selected" and selection_cells is not None:
-            banner = pygame.Rect(CANVAS.x + 10, CANVAS.y + 10, 380, 38)
+            banner = pygame.Rect(MAP_FRAME.x + 10, MAP_FRAME.y + 10, 380, 38)
             pygame.draw.rect(screen, (28, 68, 62), banner, border_radius=5)
             pygame.draw.rect(screen, (255, 228, 92), banner, 2, border_radius=5)
             screen.blit(font.render("已框选：按 Ctrl+C 复制三层内容", True, (255, 243, 180)), (banner.x + 12, banner.y + 8))
         if pygame.time.get_ticks() < notice_until and notice_lines:
             notice_height = 16 + len(notice_lines) * 26
-            notice = pygame.Rect(CANVAS.x + 10, CANVAS.bottom - notice_height - 12, CANVAS.width - 20, notice_height)
+            notice = pygame.Rect(MAP_FRAME.x + 10, MAP_FRAME.bottom - notice_height - 12, MAP_FRAME.width - 20, notice_height)
             pygame.draw.rect(screen, (33, 93, 62), notice, border_radius=6)
             pygame.draw.rect(screen, notice_color, notice, 2, border_radius=6)
             for index, text in enumerate(notice_lines):
@@ -496,17 +846,28 @@ def main(name: str):
             preview.set_alpha(150)
             px = max(0, min(MAP_W - pw // TILE, paste_origin[0]))
             py = max(0, min(MAP_H - ph // TILE, paste_origin[1]))
-            screen.blit(preview, (CANVAS.x + px * TILE, CANVAS.y + py * TILE))
-            pygame.draw.rect(screen, (255, 238, 94),
-                             (CANVAS.x + px * TILE, CANVAS.y + py * TILE, pw, ph), 3)
+            rr = map_rect(px * TILE, py * TILE, pw, ph)
+            screen.set_clip(MAP_FRAME)
+            screen.blit(preview, (rr.x, rr.y))
+            pygame.draw.rect(screen, (255, 238, 94), rr, 3)
+            screen.set_clip(None)
 
         # Palette and controls.
         layer_name = '游戏预览' if preview_mode else ('地面' if layer == 0 else '当前' if layer == 1 else '上层')
         layer_color = ((92, 210, 255), (255, 190, 75), (205, 145, 255))[layer]
         screen.blit(font.render(f"地图：{name}   当前层：{layer_name}", True, (242, 244, 218) if preview_mode else layer_color), (400, 28))
-        screen.blit(small.render("1/2/3 切层  4游戏预览  M框选  Ctrl+C复制  Ctrl+V粘贴  S保存  Esc退出", True, (190, 210, 190)), (400, 50))
+        screen.blit(small.render("1/2/3切层 4预览 M框选 Ctrl+C/V复制粘贴 T图块 O打开 E扩充 WASD平移 Ctrl+S保存 Esc", True, (190, 210, 190)), (400, 50))
+        if MAP_W * TILE > MAP_FRAME.width or MAP_H * TILE > MAP_FRAME.height:
+            screen.blit(small.render(f"视口可滚动：WASD/滚轮平移（{MAP_W}×{MAP_H} 格）", True, (150, 214, 168)), (400, 68))
         pygame.draw.rect(screen, (20, 30, 28), (8, 78, 368, 620), border_radius=8)
-        screen.blit(font.render("Outside 图块（资源区）", True, (242, 244, 218)), (24, 88))
+        # 图块集切换按钮（顶部，独立于左侧资源面板，不挤占原布局）。
+        source = TILE_SOURCES[source_index]
+        source_hot = source_index != 0
+        pygame.draw.rect(screen, (61, 109, 87) if source_hot else (48, 74, 64), SOURCE_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if source_hot else (137, 171, 139), SOURCE_BUTTON, 2, border_radius=5)
+        screen.blit(font.render(f"图块集：{source['name']}（{len(tiles)} 格）", True, (245, 246, 219)), (SOURCE_BUTTON.x + 16, SOURCE_BUTTON.y + 7))
+        screen.blit(small.render("T 切换", True, (205, 220, 198)), (SOURCE_BUTTON.right - 66, SOURCE_BUTTON.y + 12))
+        screen.blit(font.render(f"{source['name']} 图块（资源区）", True, (242, 244, 218)), (24, 88))
         palette = pygame.Rect(24, 110, 8 * 40, 4 * 40)
         for i in range(32):
             idx = palette_page * 32 + i
@@ -535,7 +896,7 @@ def main(name: str):
             screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
         pygame.draw.rect(screen, (61, 109, 87) if dirty else (48, 74, 64), SAVE_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (142, 230, 151) if dirty else (137, 171, 139), SAVE_BUTTON, 2, border_radius=5)
-        screen.blit(font.render("保存地图  [S]", True, (245, 246, 219)), (SAVE_BUTTON.x + 88, SAVE_BUTTON.y + 5))
+        screen.blit(font.render("保存地图  [Ctrl+S]", True, (245, 246, 219)), (SAVE_BUTTON.x + 66, SAVE_BUTTON.y + 5))
         pygame.draw.rect(screen, (61, 109, 87) if mode == "select" else (48, 74, 64), SELECT_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (255, 228, 92) if mode == "select" else (137, 171, 139), SELECT_BUTTON, 2, border_radius=5)
         screen.blit(font.render("框选工具  [M]", True, (245, 246, 219)), (SELECT_BUTTON.x + 84, SELECT_BUTTON.y + 8))
@@ -545,23 +906,74 @@ def main(name: str):
         pygame.draw.rect(screen, (255, 228, 92) if paste_active else ((142, 230, 151) if paste_enabled else (100, 125, 105)), PASTE_BUTTON, 2, border_radius=5)
         paste_text = "开始粘贴  [Ctrl+V]" if paste_enabled else "开始粘贴  [先 Ctrl+C]"
         screen.blit(font.render(paste_text, True, (245, 246, 219)), (PASTE_BUTTON.x + 65, PASTE_BUTTON.y + 8))
-        pygame.draw.rect(screen, (61, 109, 87) if dialog_mode else (48, 74, 64), NEW_BUTTON, border_radius=5)
-        pygame.draw.rect(screen, (255, 228, 92) if dialog_mode else (137, 171, 139), NEW_BUTTON, 2, border_radius=5)
-        screen.blit(font.render("新建地图  [N]", True, (245, 246, 219)), (NEW_BUTTON.x + 80, NEW_BUTTON.y + 8))
-        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 672))
-        if dialog_mode:
+        new_active = dialog_mode == "new"
+        pygame.draw.rect(screen, (61, 109, 87) if new_active else (48, 74, 64), NEW_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if new_active else (137, 171, 139), NEW_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("新建地图 [N]", True, (245, 246, 219)), (NEW_BUTTON.x + 16, NEW_BUTTON.y + 8))
+        resize_active = dialog_mode == "resize"
+        pygame.draw.rect(screen, (61, 109, 87) if resize_active else (48, 74, 64), RESIZE_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if resize_active else (137, 171, 139), RESIZE_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("扩充地图 [E]", True, (245, 246, 219)), (RESIZE_BUTTON.x + 16, RESIZE_BUTTON.y + 8))
+        open_active = dialog_mode == "open"
+        pygame.draw.rect(screen, (61, 109, 87) if open_active else (48, 74, 64), OPEN_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if open_active else (137, 171, 139), OPEN_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("打开已有地图  [O]", True, (245, 246, 219)), (OPEN_BUTTON.x + 66, OPEN_BUTTON.y + 3))
+        if dialog_mode == "open":
+            overlay = pygame.Surface(SCREEN, pygame.SRCALPHA)
+            overlay.fill((8, 15, 13, 185))
+            screen.blit(overlay, (0, 0))
+            dialog = OPEN_DIALOG
+            pygame.draw.rect(screen, (28, 55, 45), dialog, border_radius=10)
+            pygame.draw.rect(screen, (255, 228, 92), dialog, 3, border_radius=10)
+            screen.blit(font.render("打开已有地图", True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
+            screen.blit(small.render(f"共 {len(open_list)} 张地图。↑/↓ 选择  Enter 打开  Esc 取消", True, (220, 235, 210)), (dialog.x + 24, dialog.y + 48))
+            # 滚动窗口：让光标始终可见。
+            if open_cursor < open_scroll:
+                open_scroll = open_cursor
+            if open_cursor >= open_scroll + OPEN_VISIBLE:
+                open_scroll = open_cursor - OPEN_VISIBLE + 1
+            for i in range(len(open_list)):
+                rel = i - open_scroll
+                if not (0 <= rel < OPEN_VISIBLE):
+                    continue
+                rr = open_row_rect(i)
+                is_current = open_list[i] == name
+                is_cursor = i == open_cursor
+                bg = (61, 109, 87) if is_cursor else (40, 62, 54)
+                pygame.draw.rect(screen, bg, rr, border_radius=5)
+                pygame.draw.rect(screen, (255, 228, 92) if is_cursor else (90, 120, 105), rr, 2, border_radius=5)
+                spec = all_meta.get(open_list[i], {})
+                size = spec.get("size", [24, 18])
+                label = f"{open_list[i]}  （{size[0]}×{size[1]} 格）"
+                if is_current:
+                    label += "  ·当前"
+                screen.blit(small.render(label, True, (245, 246, 219)), (rr.x + 12, rr.y + 7))
+            screen.blit(small.render("PgUp/PgDn 翻页   滚轮也可滚动", True, (220, 235, 210)), (dialog.x + 24, dialog.y + dialog.height - 26))
+        elif dialog_mode:
             overlay = pygame.Surface(SCREEN, pygame.SRCALPHA)
             overlay.fill((8, 15, 13, 185))
             screen.blit(overlay, (0, 0))
             dialog = pygame.Rect(430, 250, 700, 190)
             pygame.draw.rect(screen, (28, 55, 45), dialog, border_radius=10)
             pygame.draw.rect(screen, (255, 228, 92), dialog, 3, border_radius=10)
-            is_new_map = dialog_mode == "new"
-            dialog_title = "新建三层地图" if is_new_map else "跳转图块页"
-            dialog_hint = "输入：地图名 宽 高（例如 forest2 20 14）" if is_new_map else f"输入页码：1 到 {page_count}"
-            dialog_value = new_map_input if is_new_map else page_input
-            dialog_placeholder = "地图名 宽 高" if is_new_map else "页码"
-            dialog_footer = "Enter 创建   Esc 取消   范围：宽 1-24，高 1-18" if is_new_map else "Enter 跳转   Esc 取消"
+            if dialog_mode == "new":
+                dialog_title = "新建三层地图"
+                dialog_hint = "输入：地图名 宽 高（例如 forest2 20 14）"
+                dialog_value = new_map_input
+                dialog_placeholder = "地图名 宽 高"
+                dialog_footer = f"Enter 创建   Esc 取消   范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}"
+            elif dialog_mode == "page":
+                dialog_title = "跳转图块页"
+                dialog_hint = f"输入页码：1 到 {page_count}"
+                dialog_value = page_input
+                dialog_placeholder = "页码"
+                dialog_footer = "Enter 跳转   Esc 取消"
+            else:
+                dialog_title = "扩充 / 调整地图尺寸"
+                dialog_hint = "输入：新宽 新高（例如 40 30），内容保留在左上角"
+                dialog_value = resize_input
+                dialog_placeholder = f"当前 {MAP_W} × {MAP_H}"
+                dialog_footer = f"Enter 调整   Esc 取消   范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}"
             screen.blit(font.render(dialog_title, True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
             screen.blit(small.render(dialog_hint, True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
             pygame.draw.rect(screen, (12, 25, 22), (dialog.x + 24, dialog.y + 92, dialog.width - 48, 42), border_radius=5)

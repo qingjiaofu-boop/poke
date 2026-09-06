@@ -15,6 +15,7 @@ import random
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pygame
@@ -27,9 +28,57 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
-WIDTH, HEIGHT = 1200, 720
-PLAY_W, PLAY_H = 800, 720
+WIDTH, HEIGHT = 480, 320
+PLAY_W, PLAY_H = WIDTH, HEIGHT
+WINDOW_SCALE = 2
+WINDOW_SIZE = (WIDTH * WINDOW_SCALE, HEIGHT * WINDOW_SCALE)
 FPS = 60
+TILE_SIZE = 32
+MOVE_FRAMES = 4
+FIELD_ATTACK_WINDUP_FRAMES = 6
+ROCK_FRAME_HOLD = 1
+WARP_FADE_FRAMES = 12
+LAYER_NAMES = ("lower", "current", "upper")
+
+WARP_LINKS = (
+    ("world", (41, 10), "grancave", (25, 10)),
+    ("grancave", (25, 11), "world", (42, 10)),
+    ("grancave", (13, 9), "caveB1F", (3, 12)),
+    ("caveB1F", (3, 13), "grancave", (13, 8)),
+    ("caveB1F", (27, 12), "caveB2f", (31, 15)),
+    ("caveB2f", (32, 15), "caveB1F", (26, 12)),
+    ("caveB2f", (34, 7), "caveB1F", (28, 7)),
+    ("caveB1F", (29, 7), "caveB2f", (34, 6)),
+    ("caveB1F", (25, 7), "grancave", (22, 2)),
+    ("grancave", (23, 2), "caveB1F", (26, 7)),
+    ("grancave", (4, 9), "finalcave", (7, 3)),
+    ("finalcave", (7, 2), "grancave", (4, 8)),
+)
+WARP_BY_SOURCE = {
+    (source_map, source): (target_map, target)
+    for source_map, source, target_map, target in WARP_LINKS
+}
+
+
+@dataclass
+class TileMap:
+    """One map in local, top-left-origin tile coordinates."""
+
+    name: str
+    size: tuple[int, int]
+    start: tuple[int, int]
+    layers: dict[str, list[list[pygame.Surface]]]
+    layer_surfaces: dict[str, pygame.Surface]
+    blocked: set[tuple[int, int]]
+    upper_tiles: set[tuple[int, int]]
+
+    @property
+    def width(self):
+        return self.size[0]
+
+    @property
+    def height(self):
+        return self.size[1]
 
 
 class SerialBridge:
@@ -82,9 +131,18 @@ class SerialBridge:
 
 
 class Game:
+    MAP_VIEW_ORDER = ("world", "grancave", "caveB1F", "caveB2f", "finalcave")
+    CAVE_MAP_NAMES = frozenset(MAP_VIEW_ORDER[1:])
+    WARPS = WARP_LINKS
+    MAP_VIEW_TITLES = {
+        "world": "室外森林世界",
+        "grancave": "矿洞入口",
+        "caveB1F": "矿洞 B1F",
+        "caveB2f": "矿洞 B2F",
+        "finalcave": "矿洞最深处",
+    }
     SCENES = {
-        # Outdoor scenes use a 24x18 hidden logic grid.  The visible map is
-        # composed from the three generated Outside tileset layers.
+        # Grid sizes and starts are fallbacks used only when map JSON is absent.
         "home": ("bg_map_home.png", (24, 18), (6, 13), "父亲的家"),
         "friend": ("bg_map_friend.png", (24, 18), (4, 10), "森林空地"),
         "route": ("bg_map_route1.png", (24, 18), (11, 15), "1号道路"),
@@ -103,12 +161,13 @@ class Game:
             pygame.mixer.init()
         except pygame.error:
             pass
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        self.display = pygame.display.set_mode(WINDOW_SIZE)
+        self.screen = pygame.Surface((WIDTH, HEIGHT)).convert()
         pygame.display.set_caption("STC-B 坚果哑铃：流星与基拉祈")
         self.clock = pygame.time.Clock()
-        self.font = self._font(21)
-        self.small = self._font(16)
-        self.title = self._font(30, True)
+        self.font = self._font(13)
+        self.small = self._font(10)
+        self.title = self._font(16, True)
         self.events: queue.Queue = queue.Queue()
         self.serial = SerialBridge(port, self.events)
         self.serial.start()
@@ -130,7 +189,19 @@ class Game:
         self.player_hp, self.enemy_hp = 100, 100
         self.move_cursor = 0
         self.heavy_ready = False
+        self.map_view: str | None = None
+        self.map_view_pos = [0, 0]
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
+        self.fade_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        self.facing = "down"
         self._load_assets()
+        self.pos[:] = self.scene_start("home")
+        world = self.tile_maps.get("world")
+        if world:
+            self.map_view = "world"
+            self.map_view_pos[:] = world.start
 
     @staticmethod
     def _font(size, bold=False):
@@ -141,24 +212,28 @@ class Game:
         return pygame.font.Font(None, size)
 
     def _load_assets(self):
+        self.tile_maps: dict[str, TileMap] = {}
         self.outdoor_maps = {}
         map_index = ASSETS / "maps" / "outdoor_maps.json"
         if map_index.exists():
             try:
                 raw_maps = json.loads(map_index.read_text(encoding="utf-8"))
-                for scene, spec in raw_maps.items():
-                    layers = {}
-                    for layer, rel_path in spec.get("layers", {}).items():
-                        try:
-                            layers[layer] = pygame.image.load(str(ASSETS / rel_path)).convert_alpha()
-                        except (pygame.error, FileNotFoundError):
-                            layers[layer] = None
-                    self.outdoor_maps[scene] = {
-                        "layers": layers,
-                        "size": tuple(spec.get("size", (24, 18))),
-                        "blocked": {tuple(cell) for cell in spec.get("blocked", [])},
+                for map_name, spec in raw_maps.items():
+                    if map_name != "world":
+                        self.tile_maps[map_name] = self._load_tile_map(map_name, spec)
+                self.tile_maps["world"] = self._load_world_map(raw_maps.get("world", {}))
+                self.outdoor_maps = {
+                    name: {
+                        "layers": tile_map.layer_surfaces,
+                        "tile_layers": tile_map.layers,
+                        "size": tile_map.size,
+                        "start": tile_map.start,
+                        "blocked": tile_map.blocked,
                     }
+                    for name, tile_map in self.tile_maps.items()
+                }
             except (OSError, ValueError, TypeError):
+                self.tile_maps = {}
                 self.outdoor_maps = {}
         self.backgrounds = {}
         for scene, (name, _grid, _start, _title) in self.SCENES.items():
@@ -167,20 +242,25 @@ class Game:
                 self.backgrounds[scene] = pygame.image.load(str(path)).convert()
             except (pygame.error, FileNotFoundError):
                 self.backgrounds[scene] = None
-        self.player = self._load("resource/map/characters/ferrothorn_user.png") or self._load("FERROTHORN_USER.png")
+        self.player_frames = self._load_movement_frames()
+        self.attack_frames = self._load_attack_frames()
+        self.rock_break_frames = self._load_rock_break_frames()
+        down_frames = self.player_frames.get("down", [])
+        self.player = down_frames[1] if len(down_frames) > 1 else None
+        self.player = self.player or self._load("resource/map/characters/ferrothorn_user.png") or self._load("FERROTHORN_USER.png")
         self.friend = self._load("introMarill.png")
         self.jirachi = self._load("JIRACHI.png")
         if self.player:
-            if self.player.get_width() >= 32 and self.player.get_height() >= 32:
+            if not self.player_frames and self.player.get_width() >= 32 and self.player.get_height() >= 32:
                 self.player = self.player.subsurface((0, 0, 32, 32)).copy()
-            self.player = pygame.transform.scale(self.player, (48, 48))
+            self.player = pygame.transform.scale(self.player, (TILE_SIZE, TILE_SIZE))
         battle_player = self._load("resource/battle/pokemon/back/ferrothorn.png") or self.player
-        self.ferro_battle = pygame.transform.smoothscale(battle_player, (210, 210)) if battle_player else None
+        self.ferro_battle = pygame.transform.scale(battle_player, (96, 96)) if battle_player else None
         self.battle_background = self._load("resource/battle/backgrounds/cave1_bg.png")
         if self.jirachi:
-            self.jirachi = pygame.transform.smoothscale(self.jirachi, (142, 142))
+            self.jirachi = pygame.transform.scale(self.jirachi, (72, 72))
         if self.friend:
-            self.friend = pygame.transform.smoothscale(self.friend, (48, 48))
+            self.friend = pygame.transform.scale(self.friend, (32, 32))
         music = ASSETS / "Title.ogg"
         if music.exists():
             try:
@@ -189,6 +269,175 @@ class Game:
                 pygame.mixer.music.play(-1)
             except pygame.error:
                 pass
+
+    def _load_tile_map(self, name, spec, size=None, start=None, blocked=None):
+        width, height = size or spec.get("size", (24, 18))
+        width, height = max(1, int(width)), max(1, int(height))
+        raw_start = start or spec.get("start", (0, 0))
+        local_start = (
+            max(0, min(width - 1, int(raw_start[0]))),
+            max(0, min(height - 1, int(raw_start[1]))),
+        )
+        local_blocked = {
+            (int(cell[0]), int(cell[1]))
+            for cell in (blocked if blocked is not None else spec.get("blocked", []))
+            if len(cell) >= 2 and 0 <= int(cell[0]) < width and 0 <= int(cell[1]) < height
+        }
+        layer_surfaces = {}
+        layers = {}
+        for layer_name in LAYER_NAMES:
+            surface = pygame.Surface((width * TILE_SIZE, height * TILE_SIZE), pygame.SRCALPHA)
+            rel_path = spec.get("layers", {}).get(layer_name)
+            if rel_path:
+                try:
+                    source = pygame.image.load(str(ASSETS / rel_path)).convert_alpha()
+                    surface.blit(source, (0, 0))
+                except (pygame.error, FileNotFoundError):
+                    pass
+            layer_surfaces[layer_name] = surface
+            layers[layer_name] = [
+                [
+                    surface.subsurface((x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE))
+                    for x in range(width)
+                ]
+                for y in range(height)
+            ]
+        upper_tiles = set()
+        if name in self.CAVE_MAP_NAMES:
+            upper_tiles = {
+                (x, y)
+                for y in range(height)
+                for x in range(width)
+                if layers["upper"][y][x].get_bounding_rect(min_alpha=1)
+            }
+        return TileMap(
+            name, (width, height), local_start, layers,
+            layer_surfaces, local_blocked, upper_tiles,
+        )
+
+    def _load_world_map(self, world_spec):
+        connection_path = ASSETS / "maps" / "world_connections.json"
+        connections = json.loads(connection_path.read_text(encoding="utf-8"))
+        world_size = tuple(connections.get("world_size", (120, 120)))
+        width, height = int(world_size[0]), int(world_size[1])
+        covered = set()
+        blocked = set()
+        start = (0, 0)
+
+        for placement in connections.get("maps", []):
+            source = self.tile_maps.get(placement.get("map"))
+            if source is None or int(placement.get("rotation", 0)) != 0:
+                continue
+            origin = placement.get("position", {})
+            ox, oy = int(origin.get("x", 0)), int(origin.get("y", 0))
+            for y in range(source.height):
+                for x in range(source.width):
+                    wx, wy = ox + x, oy + y
+                    if 0 <= wx < width and 0 <= wy < height:
+                        covered.add((wx, wy))
+                        # Placements are painted in manifest order. A later map
+                        # replaces both the visible tile and collision state.
+                        blocked.discard((wx, wy))
+            blocked.update(
+                (ox + x, oy + y)
+                for x, y in source.blocked
+                if 0 <= ox + x < width and 0 <= oy + y < height
+            )
+            if source.name == "home":
+                start = (ox + source.start[0], oy + source.start[1])
+
+        blocked.update(
+            (x, y)
+            for y in range(height)
+            for x in range(width)
+            if (x, y) not in covered
+        )
+        if start in blocked:
+            start = next(((x, y) for y in range(height) for x in range(width)
+                          if (x, y) not in blocked), (0, 0))
+
+        layers = world_spec.get("layers") or {
+            layer_name: f"maps/world_{layer_name}.png" for layer_name in LAYER_NAMES
+        }
+        return self._load_tile_map(
+            "world", {"layers": layers}, (width, height), start, blocked
+        )
+
+    def _load_movement_frames(self):
+        path = ASSETS / "movements.png"
+        if not path.exists():
+            return {}
+        try:
+            sheet = pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return {}
+
+        columns = (177, 216, 255)
+        rows = {"down": (31, 27), "left": (85, 27), "up": (141, 28)}
+
+        frames = {
+            direction: [self._character_frame(sheet, (x, y, 40, height)) for x in columns]
+            for direction, (y, height) in rows.items()
+        }
+        frames["right"] = [pygame.transform.flip(frame, True, False)
+                           for frame in frames["left"]]
+        return frames
+
+    def _load_attack_frames(self):
+        path = ASSETS / "movements.png"
+        if not path.exists():
+            return {}
+        try:
+            sheet = pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return {}
+
+        crops = {
+            "down": ((355, 39, 29, 24), (315, 139, 33, 19), (317, 170, 31, 20)),
+            "up": ((314, 80, 33, 20), (356, 75, 27, 25), (315, 108, 32, 21)),
+            "right": ((359, 110, 36, 19), (356, 140, 35, 18), (356, 170, 36, 25)),
+        }
+        frames = {
+            direction: [self._character_frame(sheet, rect) for rect in rects]
+            for direction, rects in crops.items()
+        }
+        frames["left"] = [pygame.transform.flip(frame, True, False)
+                          for frame in frames["right"]]
+        return frames
+
+    @staticmethod
+    def _character_frame(sheet, rect):
+        source = sheet.subsurface(rect).copy()
+        for py in range(source.get_height()):
+            for px in range(source.get_width()):
+                color = source.get_at((px, py))
+                if all(abs(int(color[channel]) - 239) <= 16 for channel in range(3)):
+                    source.set_at((px, py), (0, 0, 0, 0))
+        bounds = source.get_bounding_rect()
+        frame = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        if bounds.width and bounds.height:
+            sprite = source.subsurface(bounds).copy()
+            scale = min(TILE_SIZE / bounds.width, TILE_SIZE / bounds.height)
+            size = (max(1, round(bounds.width * scale)),
+                    max(1, round(bounds.height * scale)))
+            sprite = pygame.transform.scale(sprite, size)
+            frame.blit(sprite, ((TILE_SIZE - size[0]) // 2, TILE_SIZE - size[1]))
+        return frame
+
+    @staticmethod
+    def _load_rock_break_frames():
+        path = ASSETS / "resource" / "map" / "objects" / "rock_break_sequence.png"
+        try:
+            sheet = pygame.image.load(str(path)).convert_alpha()
+        except (pygame.error, FileNotFoundError):
+            return []
+        if sheet.get_width() < TILE_SIZE or sheet.get_height() < TILE_SIZE:
+            return []
+        return [
+            sheet.subsurface((x, y, TILE_SIZE, TILE_SIZE)).copy()
+            for y in range(0, sheet.get_height() - TILE_SIZE + 1, TILE_SIZE)
+            for x in range(0, sheet.get_width() - TILE_SIZE + 1, TILE_SIZE)
+        ]
 
     @staticmethod
     def _load(name):
@@ -204,6 +453,9 @@ class Game:
             self.clock.tick(FPS)
             self.handle_events()
             self.read_serial()
+            self.update_movement()
+            self.update_field_attack()
+            self.update_warp_fade()
             self.draw()
         self.serial.close()
         pygame.quit()
@@ -215,13 +467,31 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                elif self.step or self.field_attack or self.warp_fade_frames:
+                    continue
+                elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
+                                    pygame.K_KP1, pygame.K_KP2, pygame.K_KP3, pygame.K_KP4, pygame.K_KP5):
+                    number_keys = {
+                        pygame.K_1: 0, pygame.K_KP1: 0,
+                        pygame.K_2: 1, pygame.K_KP2: 1,
+                        pygame.K_3: 2, pygame.K_KP3: 2,
+                        pygame.K_4: 3, pygame.K_KP4: 3,
+                        pygame.K_5: 4, pygame.K_KP5: 4,
+                    }
+                    self.switch_map_view(number_keys[event.key])
                 elif event.key == pygame.K_r:
                     self.reset()
                 elif event.key == pygame.K_v:
                     self.vibration_count += 1
                     self.vibration()
+                elif event.key == pygame.K_z:
+                    self.use_field_heavy_slam()
                 elif event.key == pygame.K_F1:
-                    self.cycle_scene()
+                    if self.map_view:
+                        self.map_view = None
+                        self.show_toast("已返回剧情场景。", 1.5)
+                    else:
+                        self.cycle_scene()
                 elif event.key == pygame.K_F2:
                     self.show_toast("F2：STC-B 传感器联动状态", 2)
                 else:
@@ -242,6 +512,8 @@ class Game:
                 else:
                     self.temperature = self.adc_temperature(event[2])
             elif event[0] == "vibration":
+                if self.step or self.field_attack or self.warp_fade_frames:
+                    continue
                 self.vibration_count += 1
                 self.vibration()
             else:
@@ -254,6 +526,8 @@ class Game:
         return 1.0 / (1.0 / 298.15 + math.log(resistance / 10000.0) / 3950.0) - 273.15
 
     def command(self, command):
+        if self.step or self.field_attack or self.warp_fade_frames:
+            return
         if command == 6:
             self.reset()
             return
@@ -267,6 +541,10 @@ class Game:
         if command == 9:
             self.vibration_count += 1
             self.vibration()
+            return
+        if self.map_view:
+            if command in (1, 2, 3, 4):
+                self.move_map_view(command)
             return
         if self.scene == "battle":
             self.battle_command(command)
@@ -284,7 +562,9 @@ class Game:
             self.interact()
 
     def move(self, command):
-        grid = self.SCENES[self.scene][1]
+        tile_map = self.tile_maps.get(self.scene)
+        grid = tile_map.size if tile_map else self.SCENES[self.scene][1]
+        self.facing = {1: "up", 2: "down", 3: "left", 4: "right"}[command]
         dxdy = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}[command]
         nx, ny = self.pos[0] + dxdy[0], self.pos[1] + dxdy[1]
         if not (0 <= nx < grid[0] and 0 <= ny < grid[1]):
@@ -293,11 +573,156 @@ class Game:
         if self.scene == "cave3" and not self.rock_broken and [nx, ny] == self.ROCK_POS:
             self.show_toast("岩石挡住了去路。请靠近后晃动 STC-B。", 2.5)
             return
-        outdoor = self.outdoor_maps.get(self.scene)
-        if outdoor and (nx, ny) in outdoor["blocked"]:
+        if tile_map and (nx, ny) in tile_map.blocked:
             self.show_toast("这里有花丛或装饰物，换个方向试试。", 1.0)
             return
-        self.pos[:] = [nx, ny]
+        self._begin_step(self.pos, (nx, ny), command)
+
+    def scene_start(self, scene):
+        tile_map = self.tile_maps.get(scene)
+        return list(tile_map.start if tile_map else self.SCENES[scene][2])
+
+    def switch_map_view(self, index):
+        map_name = self.MAP_VIEW_ORDER[index]
+        tile_map = self.tile_maps.get(map_name)
+        if tile_map is None:
+            self.show_toast(f"地图未加载：{map_name}", 2)
+            return
+        self.map_view = map_name
+        self.map_view_pos[:] = tile_map.start
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
+        self.facing = "down"
+        self.dialogue = []
+        self.show_toast(f"地图 {index + 1}：{self.MAP_VIEW_TITLES[map_name]}", 1.8)
+
+    def move_map_view(self, command):
+        tile_map = self.tile_maps[self.map_view]
+        self.facing = {1: "up", 2: "down", 3: "left", 4: "right"}[command]
+        dx, dy = {1: (0, -1), 2: (0, 1), 3: (-1, 0), 4: (1, 0)}[command]
+        nx, ny = self.map_view_pos[0] + dx, self.map_view_pos[1] + dy
+        if not (0 <= nx < tile_map.width and 0 <= ny < tile_map.height):
+            self.show_toast("已到达地图边界。", 1)
+            return
+        if (nx, ny) in tile_map.blocked:
+            self.show_toast("该格不可通行。", 1)
+            return
+        self._begin_step(self.map_view_pos, (nx, ny), command)
+
+    @staticmethod
+    def upper_tile_exists(tile_map, point):
+        x, y = point
+        if not (0 <= x < tile_map.width and 0 <= y < tile_map.height):
+            return False
+        return point in tile_map.upper_tiles
+
+    def is_breakable_rock(self, tile_map, point):
+        return (tile_map.name in self.CAVE_MAP_NAMES
+                and point in tile_map.blocked
+                and self.upper_tile_exists(tile_map, point))
+
+    def use_field_heavy_slam(self):
+        if self.step or self.field_attack or self.map_view not in self.CAVE_MAP_NAMES:
+            return False
+        tile_map = self.tile_maps[self.map_view]
+        dx, dy = {
+            "up": (0, -1), "down": (0, 1),
+            "left": (-1, 0), "right": (1, 0),
+        }[self.facing]
+        target = (self.map_view_pos[0] + dx, self.map_view_pos[1] + dy)
+        if not self.is_breakable_rock(tile_map, target):
+            return False
+        self.field_attack = {
+            "context": self._movement_context(),
+            "tile_map": tile_map,
+            "target": target,
+            "frame": 0,
+            "broken": False,
+        }
+        return True
+
+    def update_field_attack(self):
+        attack = self.field_attack
+        if not attack:
+            return
+        if attack["context"] != self._movement_context():
+            self.field_attack = None
+            return
+        attack["frame"] += 1
+        if not attack["broken"] and attack["frame"] >= FIELD_ATTACK_WINDUP_FRAMES:
+            x, y = attack["target"]
+            tile_map = attack["tile_map"]
+            tile_map.layer_surfaces["upper"].fill(
+                (0, 0, 0, 0),
+                pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
+            )
+            tile_map.layers["upper"][y][x] = pygame.Surface(
+                (TILE_SIZE, TILE_SIZE), pygame.SRCALPHA
+            )
+            tile_map.upper_tiles.discard((x, y))
+            tile_map.blocked.discard((x, y))
+            attack["broken"] = True
+        effect_frames = max(1, len(self.rock_break_frames)) * ROCK_FRAME_HOLD
+        if attack["frame"] >= FIELD_ATTACK_WINDUP_FRAMES + effect_frames:
+            self.field_attack = None
+
+    def trigger_warp(self):
+        if not self.map_view:
+            return False
+        destination = WARP_BY_SOURCE.get((self.map_view, tuple(self.map_view_pos)))
+        if destination is None:
+            return False
+        target_map_name, target = destination
+        target_map = self.tile_maps.get(target_map_name)
+        if target_map is None or target in target_map.blocked:
+            return False
+        self.map_view = target_map_name
+        self.map_view_pos[:] = target
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = WARP_FADE_FRAMES
+        if hasattr(self, "_map_camera"):
+            del self._map_camera
+        return True
+
+    def update_warp_fade(self):
+        if self.warp_fade_frames:
+            self.warp_fade_frames -= 1
+
+    def _movement_context(self):
+        return ("view", self.map_view) if self.map_view else ("scene", self.scene)
+
+    def _begin_step(self, position, target, command):
+        self.facing = {1: "up", 2: "down", 3: "left", 4: "right"}[command]
+        self.step = {
+            "context": self._movement_context(),
+            "position": position,
+            "from": tuple(position),
+            "to": tuple(target),
+            "frame": 0,
+        }
+
+    def update_movement(self):
+        if not self.step:
+            return
+        if self.step["context"] != self._movement_context():
+            self.step = None
+            return
+        self.step["frame"] += 1
+        if self.step["frame"] >= MOVE_FRAMES:
+            self.step["position"][:] = self.step["to"]
+            self.step = None
+            self.trigger_warp()
+
+    def actor_grid_position(self, position):
+        if not self.step or self.step["context"] != self._movement_context():
+            return float(position[0]), float(position[1])
+        progress = self.step["frame"] / MOVE_FRAMES
+        start_x, start_y = self.step["from"]
+        target_x, target_y = self.step["to"]
+        return (start_x + (target_x - start_x) * progress,
+                start_y + (target_y - start_y) * progress)
 
     def transition_from_edge(self, command):
         next_scene = None
@@ -314,8 +739,10 @@ class Game:
         elif self.scene == "cave3" and command == 1 and self.rock_broken:
             next_scene = "ending"
         if next_scene:
+            self.step = None
             self.scene = next_scene
-            self.pos[:] = list(self.SCENES[next_scene][2])
+            if next_scene in self.SCENES:
+                self.pos[:] = self.scene_start(next_scene)
             if next_scene == "route":
                 self.meteor_phase = 1
                 self.show_toast("一道流星划过天空，坠向北方的山洞。", 3)
@@ -352,6 +779,9 @@ class Game:
             self.start_battle()
 
     def start_battle(self):
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
         self.scene = "battle"
         self.player_hp, self.enemy_hp = 100, 100
         self.move_cursor = 0
@@ -361,8 +791,9 @@ class Game:
     def battle_command(self, command):
         if self.battle_won:
             if command == 5:
+                self.step = None
                 self.scene = "route"
-                self.pos[:] = list(self.SCENES["route"][2])
+                self.pos[:] = self.scene_start("route")
                 self.meteor_phase = 1
                 self.show_toast("训练结束。青梅：流星坠向北方的山洞！", 3)
             return
@@ -420,13 +851,21 @@ class Game:
         return abs(a[0] - b[0]) + abs(a[1] - b[1]) <= 1
 
     def cycle_scene(self):
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
         order = ["home", "friend", "battle", "route", "cave1", "cave2", "cave3", "ending"]
         self.scene = order[(order.index(self.scene) + 1) % len(order)]
         if self.scene in self.SCENES:
-            self.pos[:] = list(self.SCENES[self.scene][2])
+            self.pos[:] = self.scene_start(self.scene)
 
     def reset(self):
-        self.scene, self.pos = "home", list(self.SCENES["home"][2])
+        self.map_view = None
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
+        self.facing = "down"
+        self.scene, self.pos = "home", self.scene_start("home")
         self.father_done = self.friend_met = self.battle_won = False
         self.rock_broken = False
         self.dialogue = []
@@ -439,31 +878,82 @@ class Game:
         self.toast, self.toast_until = text, time.monotonic() + seconds
 
     def draw(self):
-        if self.scene == "battle":
+        if self.map_view:
+            self.draw_map_view()
+        elif self.scene == "battle":
             self.draw_battle()
         elif self.scene == "ending":
             self.draw_ending()
         else:
             self.draw_map()
-        self.draw_sidebar()
+        if self.map_view or self.scene not in ("battle", "ending"):
+            self.draw_status_badge()
         if self.dialogue:
             self.draw_dialogue(self.dialogue[self.dialogue_index])
         elif self.toast and time.monotonic() < self.toast_until:
             self.draw_toast(self.toast)
+        self.draw_warp_fade()
+        scaled = pygame.transform.scale(self.screen, WINDOW_SIZE)
+        self.display.blit(scaled, (0, 0))
         pygame.display.flip()
+
+    def draw_map_view(self):
+        tile_map = self.tile_maps[self.map_view]
+        actor_pos = self.actor_grid_position(self.map_view_pos)
+        camera_x, camera_y, origin_x, origin_y = self.map_camera(tile_map, actor_pos)
+        self.screen.fill((20, 24, 22), (0, 0, PLAY_W, PLAY_H))
+        self.draw_tile_layer(tile_map, "lower", camera_x, camera_y, origin_x, origin_y)
+        self.draw_tile_layer(tile_map, "current", camera_x, camera_y, origin_x, origin_y)
+        actor_x = origin_x + (actor_pos[0] + 0.5) * TILE_SIZE - camera_x
+        actor_y = origin_y + (actor_pos[1] + 0.5) * TILE_SIZE - camera_y
+        self.draw_actor(actor_x, actor_y)
+        self.draw_tile_layer(tile_map, "upper", camera_x, camera_y, origin_x, origin_y)
+        self.draw_rock_break(camera_x, camera_y, origin_x, origin_y)
+
+        index = self.MAP_VIEW_ORDER.index(self.map_view) + 1
+        label = f"{index}  {self.MAP_VIEW_TITLES[self.map_view]}  {tile_map.width}×{tile_map.height}"
+        label_box = pygame.Rect(6, 6, self.title.size(label)[0] + 14, 25)
+        pygame.draw.rect(self.screen, (16, 27, 26), label_box, border_radius=3)
+        pygame.draw.rect(self.screen, (169, 190, 126), label_box, 1, border_radius=3)
+        self.screen.blit(self.title.render(label, True, (252, 247, 210)), (13, 10))
+
+    @staticmethod
+    def map_camera(tile_map, actor_pos):
+        map_width = tile_map.width * TILE_SIZE
+        map_height = tile_map.height * TILE_SIZE
+        focus_x = (actor_pos[0] + 0.5) * TILE_SIZE
+        focus_y = (actor_pos[1] + 0.5) * TILE_SIZE
+        camera_x = round(max(0, min(max(0, map_width - PLAY_W), focus_x - PLAY_W / 2)))
+        camera_y = round(max(0, min(max(0, map_height - PLAY_H), focus_y - PLAY_H / 2)))
+        origin_x = max(0, (PLAY_W - map_width) // 2)
+        origin_y = max(0, (PLAY_H - map_height) // 2)
+        return camera_x, camera_y, origin_x, origin_y
+
+    def draw_tile_layer(self, tile_map, layer_name, camera_x, camera_y, origin_x=0, origin_y=0):
+        grid = tile_map.layers[layer_name]
+        first_x = max(0, camera_x // TILE_SIZE)
+        first_y = max(0, camera_y // TILE_SIZE)
+        last_x = min(tile_map.width, (camera_x + PLAY_W + TILE_SIZE - 1) // TILE_SIZE)
+        last_y = min(tile_map.height, (camera_y + PLAY_H + TILE_SIZE - 1) // TILE_SIZE)
+        for y in range(first_y, last_y):
+            for x in range(first_x, last_x):
+                self.screen.blit(
+                    grid[y][x],
+                    (origin_x + x * TILE_SIZE - camera_x,
+                     origin_y + y * TILE_SIZE - camera_y),
+                )
 
     def draw_map(self):
         bg = self.backgrounds.get(self.scene)
         outdoor = self.outdoor_maps.get(self.scene)
-        if outdoor and outdoor["layers"].get("lower"):
-            # Draw the map at native tile proportions.  Pixel-art layers use
-            # nearest-neighbour scaling so the 32px tiles stay crisp.
-            target = pygame.Rect(0, 0, PLAY_W, HEIGHT)
-            self.map_rect = self.blit_fit(outdoor["layers"]["lower"], target, (91, 125, 75))
-            for layer_name in ("current",):
-                layer = outdoor["layers"].get(layer_name)
-                if layer:
-                    self.blit_layer(layer, self.map_rect)
+        actor_pos = self.actor_grid_position(self.pos)
+        if outdoor and self.scene in self.tile_maps:
+            tile_map = self.tile_maps[self.scene]
+            camera_x, camera_y, origin_x, origin_y = self.map_camera(tile_map, actor_pos)
+            self._map_camera = (camera_x, camera_y, origin_x, origin_y)
+            self.screen.fill((46, 91, 58))
+            self.draw_tile_layer(tile_map, "lower", *self._map_camera)
+            self.draw_tile_layer(tile_map, "current", *self._map_camera)
         elif bg:
             target = pygame.Rect(0, 0, PLAY_W, HEIGHT)
             if self.scene.startswith("cave"):
@@ -479,32 +969,28 @@ class Game:
         elif self.scene == "friend":
             self.draw_npc_at("friend", self.friend, "青梅")
         elif self.scene == "route":
-            self.screen.blit(self.font.render("流星坠落方向 ↑", True, (255, 245, 180)), (30, 30))
+            self.screen.blit(self.font.render("流星坠落方向 ↑", True, (255, 245, 180)), (12, 12))
             if self.meteor_phase:
-                pygame.draw.line(self.screen, (255, 245, 160), (600, 25), (680, 190), 5)
-                pygame.draw.circle(self.screen, (255, 239, 143), (600, 25), 13)
+                pygame.draw.line(self.screen, (255, 245, 160), (350, 8), (390, 80), 3)
+                pygame.draw.circle(self.screen, (255, 239, 143), (350, 8), 7)
         elif self.scene == "cave3":
             self.draw_rock()
             if self.rock_broken and self.jirachi:
-                self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(650, 170)))
-        x, y = self.tile_point(self.pos)
+                self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(390, 75)))
+        x, y = self.tile_point(actor_pos)
         self.draw_actor(x, y)
         # Upper layer is intentionally rendered last: tree crowns and roof
         # edges can cover the actor's head while walking underneath them.
-        if outdoor:
-            upper = outdoor["layers"].get("upper")
-            if upper:
-                self.blit_layer(upper, self.map_rect)
-        self.screen.blit(self.title.render(self.SCENES[self.scene][3], True, (252, 247, 210)), (24, 22))
+        if outdoor and self.scene in self.tile_maps:
+            self.draw_tile_layer(self.tile_maps[self.scene], "upper", *self._map_camera)
+        self.screen.blit(self.title.render(self.SCENES[self.scene][3], True, (252, 247, 210)), (10, 9))
 
     def tile_point(self, pos):
         outdoor = self.outdoor_maps.get(self.scene)
-        if outdoor and hasattr(self, "map_rect"):
-            w, h = outdoor["size"]
-            tile_w = self.map_rect.width / w
-            tile_h = self.map_rect.height / h
-            return (self.map_rect.left + (pos[0] + 0.5) * tile_w,
-                    self.map_rect.top + (pos[1] + 0.5) * tile_h)
+        if outdoor and hasattr(self, "_map_camera"):
+            camera_x, camera_y, origin_x, origin_y = self._map_camera
+            return (origin_x + (pos[0] + 0.5) * TILE_SIZE - camera_x,
+                    origin_y + (pos[1] + 0.5) * TILE_SIZE - camera_y)
         grid = self.SCENES[self.scene][1]
         rect = getattr(self, "map_rect", pygame.Rect(0, 0, PLAY_W, HEIGHT))
         pad_x = min(58, rect.width * 0.08)
@@ -513,20 +999,56 @@ class Game:
                 rect.top + pad_y + pos[1] * (rect.height - 2 * pad_y) / max(1, grid[1] - 1))
 
     def draw_actor(self, x, y):
-        if self.player:
-            self.screen.blit(self.player, self.player.get_rect(center=(int(x), int(y))))
-        else:
-            pygame.draw.circle(self.screen, (180, 200, 180), (int(x), int(y)), 28)
-        shadow = pygame.Rect(int(x - 25), int(y + 31), 50, 10)
+        shadow = pygame.Rect(int(x - 10), int(y + 11), 20, 5)
         pygame.draw.ellipse(self.screen, (30, 45, 30), shadow)
+        frames = self.player_frames.get(self.facing, [])
+        if self.field_attack:
+            attack_frames = self.attack_frames.get(self.facing, [])
+            sequence = (0, 1, 2, 1, 0)
+            if attack_frames and self.field_attack["frame"] < len(sequence) * 2:
+                sequence_index = min(len(sequence) - 1, self.field_attack["frame"] // 2)
+                image = attack_frames[sequence[sequence_index]]
+                self.screen.blit(image, image.get_rect(center=(round(x), round(y))))
+                return
+        if frames:
+            frame_index = min(len(frames) - 1, self.step["frame"] - 1) if self.step else 1
+            image = frames[max(0, frame_index)]
+            self.screen.blit(image, image.get_rect(center=(round(x), round(y))))
+        elif self.player:
+            self.screen.blit(self.player, self.player.get_rect(center=(round(x), round(y))))
+        else:
+            pygame.draw.circle(self.screen, (180, 200, 180), (round(x), round(y)), 14)
+
+    def draw_rock_break(self, camera_x, camera_y, origin_x=0, origin_y=0):
+        attack = self.field_attack
+        if not attack or not attack["broken"] or not self.rock_break_frames:
+            return
+        elapsed = attack["frame"] - FIELD_ATTACK_WINDUP_FRAMES
+        frame_index = min(len(self.rock_break_frames) - 1, elapsed // ROCK_FRAME_HOLD)
+        x, y = attack["target"]
+        self.screen.blit(
+            self.rock_break_frames[frame_index],
+            (origin_x + x * TILE_SIZE - camera_x,
+             origin_y + y * TILE_SIZE - camera_y),
+        )
+
+    def draw_warp_fade(self):
+        if not self.warp_fade_frames:
+            return
+        fade_frames = WARP_FADE_FRAMES * 2 // 3
+        alpha = 255 if self.warp_fade_frames > fade_frames else round(
+            255 * self.warp_fade_frames / fade_frames
+        )
+        self.fade_overlay.fill((0, 0, 0, alpha))
+        self.screen.blit(self.fade_overlay, (0, 0))
 
     def draw_npc(self, x, y, image, label):
         if image:
-            image = pygame.transform.smoothscale(image, (48, 48))
+            image = pygame.transform.scale(image, (32, 32))
             self.screen.blit(image, image.get_rect(center=(x, y)))
         else:
-            pygame.draw.circle(self.screen, (222, 216, 174), (x, y), 28)
-        self.screen.blit(self.small.render(label, True, (30, 45, 30)), (x - 24, y + 42))
+            pygame.draw.circle(self.screen, (222, 216, 174), (x, y), 14)
+        self.screen.blit(self.small.render(label, True, (30, 45, 30)), (x - 12, y + 17))
 
     def draw_npc_at(self, scene, image, label):
         x, y = self.tile_point(self.NPC_POS[scene])
@@ -536,40 +1058,39 @@ class Game:
         if self.rock_broken:
             return
         x, y = self.tile_point(self.ROCK_POS)
-        pygame.draw.polygon(self.screen, (93, 92, 103), ((x - 38, y + 34), (x - 29, y - 29), (x + 30, y - 37), (x + 48, y + 24), (x + 12, y + 42)))
-        pygame.draw.line(self.screen, (185, 181, 191), (x - 12, y - 18), (x + 20, y + 15), 3)
+        pygame.draw.polygon(self.screen, (93, 92, 103), ((x - 14, y + 12), (x - 11, y - 11), (x + 10, y - 13), (x + 15, y + 9), (x + 4, y + 14)))
+        pygame.draw.line(self.screen, (185, 181, 191), (x - 5, y - 7), (x + 7, y + 5), 2)
 
     def draw_battle(self):
         if self.battle_background:
-            self.blit_cover(self.battle_background, pygame.Rect(0, 0, PLAY_W, 460))
+            self.blit_cover(self.battle_background, pygame.Rect(0, 0, WIDTH, 205))
         else:
-            self.screen.fill((43, 72, 65), (0, 0, PLAY_W, HEIGHT))
-        pygame.draw.rect(self.screen, (121, 164, 112), (35, 70, 730, 390), border_radius=12)
-        pygame.draw.ellipse(self.screen, (73, 112, 84), (55, 350, 370, 85))
-        pygame.draw.ellipse(self.screen, (73, 112, 84), (430, 160, 730, 240))
+            self.screen.fill((43, 72, 65))
+        pygame.draw.ellipse(self.screen, (73, 112, 84), (25, 155, 205, 42))
+        pygame.draw.ellipse(self.screen, (73, 112, 84), (282, 74, 175, 35))
         if self.ferro_battle:
-            self.screen.blit(self.ferro_battle, self.ferro_battle.get_rect(center=(220, 315)))
+            self.screen.blit(self.ferro_battle, self.ferro_battle.get_rect(center=(120, 145)))
         if self.jirachi:
-            self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(590, 190)))
-        self.draw_hp((65, 85), "坚果哑铃", self.player_hp)
-        self.draw_hp((470, 90), "训练对手", self.enemy_hp)
-        self.screen.blit(self.title.render("训练战斗", True, (248, 243, 204)), (28, 24))
+            self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(370, 62)))
+        self.draw_hp((16, 16), "坚果哑铃", self.player_hp)
+        self.draw_hp((305, 115), "训练对手", self.enemy_hp)
+        self.screen.blit(self.title.render("训练战斗", True, (248, 243, 204)), (196, 6))
         labels = ["光合作用", "日光束", "重磅冲撞", "气象球"]
-        pygame.draw.rect(self.screen, (22, 38, 36), (35, 490, 730, 185), border_radius=10)
+        pygame.draw.rect(self.screen, (22, 38, 36), (6, 210, 468, 104), border_radius=5)
         for i, label in enumerate(labels):
             col, row = i % 2, i // 2
-            box = pygame.Rect(55 + col * 350, 510 + row * 65, 320, 52)
+            box = pygame.Rect(14 + col * 231, 218 + row * 45, 221, 38)
             color = (187, 153, 75) if i == self.move_cursor else (73, 105, 88)
-            pygame.draw.rect(self.screen, color, box, border_radius=6)
+            pygame.draw.rect(self.screen, color, box, border_radius=3)
             suffix = " *" if i == 2 and self.heavy_ready else ""
-            self.screen.blit(self.font.render(label + suffix, True, (245, 244, 213)), (box.x + 18, box.y + 12))
+            self.screen.blit(self.font.render(label + suffix, True, (245, 244, 213)), (box.x + 10, box.y + 10))
 
     def blit_cover(self, image, target):
         """Scale a map or battle background without changing its aspect ratio."""
         iw, ih = image.get_size()
         scale = max(target.width / iw, target.height / ih)
         size = (max(1, round(iw * scale)), max(1, round(ih * scale)))
-        scaled = pygame.transform.smoothscale(image, size)
+        scaled = pygame.transform.scale(image, size)
         crop = scaled.get_rect(center=target.center)
         self.screen.set_clip(target)
         self.screen.blit(scaled, crop)
@@ -581,7 +1102,7 @@ class Game:
         iw, ih = image.get_size()
         scale = min(target.width / iw, target.height / ih)
         size = (max(1, round(iw * scale)), max(1, round(ih * scale)))
-        scaled = pygame.transform.smoothscale(image, size)
+        scaled = pygame.transform.scale(image, size)
         rect = scaled.get_rect(center=target.center)
         self.screen.blit(scaled, rect)
         return rect
@@ -594,53 +1115,54 @@ class Game:
     def draw_hp(self, xy, name, hp):
         x, y = xy
         self.screen.blit(self.font.render(name, True, (30, 50, 35)), (x, y))
-        pygame.draw.rect(self.screen, (43, 51, 43), (x, y + 31, 270, 18), border_radius=9)
-        pygame.draw.rect(self.screen, (218, 214, 112) if hp > 30 else (207, 92, 76), (x + 3, y + 34, max(0, 264 * hp / 100), 12), border_radius=6)
-        self.screen.blit(self.small.render(f"HP {hp}/100", True, (30, 50, 35)), (x + 180, y + 54))
+        pygame.draw.rect(self.screen, (43, 51, 43), (x, y + 18, 155, 10), border_radius=4)
+        pygame.draw.rect(self.screen, (218, 214, 112) if hp > 30 else (207, 92, 76),
+                         (x + 2, y + 20, max(0, round(151 * hp / 100)), 6), border_radius=3)
+        self.screen.blit(self.small.render(f"HP {hp}/100", True, (30, 50, 35)), (x + 98, y + 30))
 
     def draw_ending(self):
-        self.screen.fill((42, 43, 77), (0, 0, PLAY_W, HEIGHT))
-        pygame.draw.circle(self.screen, (245, 229, 158), (375, 235), 175)
+        self.screen.fill((42, 43, 77))
+        pygame.draw.circle(self.screen, (245, 229, 158), (260, 110), 82)
         if self.jirachi:
-            self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(385, 235)))
-        self.draw_actor(200, 420)
-        self.screen.blit(self.title.render("流星的朋友", True, (255, 244, 186)), (30, 32))
+            self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(260, 105)))
+        self.draw_actor(125, 185)
+        self.screen.blit(self.title.render("流星的朋友", True, (255, 244, 186)), (14, 14))
         self.draw_dialogue("基拉祈：谢谢你把我唤醒。今后，我们一起寻找更多流星吧。")
 
-    def draw_sidebar(self):
-        pygame.draw.rect(self.screen, (21, 34, 30), (PLAY_W, 0, WIDTH - PLAY_W, HEIGHT))
-        pygame.draw.line(self.screen, (111, 151, 103), (PLAY_W, 0), (PLAY_W, HEIGHT), 2)
-        self.screen.blit(self.title.render("STC-B 状态", True, (235, 242, 214)), (830, 28))
-        scene_name = "战斗" if self.scene == "battle" else (self.SCENES.get(self.scene, (None, None, None, "结局"))[3])
+    def draw_status_badge(self):
+        position = self.map_view_pos if self.map_view else self.pos
+        coordinate = self.small.render(
+            f"X {position[0]}   Y {position[1]}", True, (252, 247, 210)
+        )
+        coordinate_box = pygame.Rect(
+            WIDTH - coordinate.get_width() - 16, 6,
+            coordinate.get_width() + 10, 20,
+        )
+        pygame.draw.rect(self.screen, (16, 27, 26), coordinate_box, border_radius=3)
+        pygame.draw.rect(self.screen, (212, 185, 101), coordinate_box, 1, border_radius=3)
+        self.screen.blit(coordinate, (coordinate_box.x + 5, coordinate_box.y + 5))
+
         light = "--" if self.light is None else str(self.light)
-        temp = "--" if self.temperature is None else f"{self.temperature:.1f} °C"
-        rows = [("主角", "坚果哑铃"), ("场景", scene_name), ("光照 ADC", light), ("温度", temp), ("震动次数", str(self.vibration_count)), ("岩石", "已击碎" if self.rock_broken else "未击碎")]
-        y = 105
-        for label, value in rows:
-            self.screen.blit(self.small.render(label, True, (158, 185, 158)), (830, y))
-            self.screen.blit(self.font.render(value, True, (236, 241, 214)), (950, y - 4))
-            y += 42
-        pygame.draw.line(self.screen, (62, 92, 69), (830, y + 8), (1170, y + 8), 1)
-        self.screen.blit(self.font.render("传感器效果", True, (235, 242, 214)), (830, y + 34))
-        power = 0.5 + (self.light or 512) / 1023.0
-        effects = [f"光合作用  +{round(18 * power)} HP", f"日光束    {round(45 * power)} 威力", "重磅冲撞  震动触发", "气象球    温度决定属性"]
-        for i, text in enumerate(effects):
-            self.screen.blit(self.small.render(text, True, (201, 216, 191)), (842, y + 75 + i * 29))
-        controls = "导航键：移动/选择\n中心键：互动/确认\nK1：重开\nK2：取消\n导航键3：切换场景\n震动：重磅冲撞\nV：键盘模拟震动"
-        self.draw_multiline(830, 555, controls, self.small, (145, 172, 148), 340)
-        self.screen.blit(self.small.render(self.serial.status, True, (120, 150, 126)), (830, 685))
+        temp = "--" if self.temperature is None else f"{self.temperature:.1f}C"
+        text = f"L {light}   T {temp}   V {self.vibration_count}"
+        rendered = self.small.render(text, True, (235, 242, 214))
+        box = pygame.Rect(WIDTH - rendered.get_width() - 16, 29,
+                          rendered.get_width() + 10, 20)
+        pygame.draw.rect(self.screen, (16, 27, 26), box, border_radius=3)
+        pygame.draw.rect(self.screen, (111, 151, 103), box, 1, border_radius=3)
+        self.screen.blit(rendered, (box.x + 5, box.y + 5))
 
     def draw_dialogue(self, text):
-        box = pygame.Rect(28, 585, PLAY_W - 56, 105)
-        pygame.draw.rect(self.screen, (16, 27, 26), box, border_radius=9)
-        pygame.draw.rect(self.screen, (169, 190, 126), box, 2, border_radius=9)
-        self.draw_multiline(48, 605, text, self.font, (242, 245, 220), box.width - 40)
+        box = pygame.Rect(10, 242, WIDTH - 20, 68)
+        pygame.draw.rect(self.screen, (16, 27, 26), box, border_radius=4)
+        pygame.draw.rect(self.screen, (169, 190, 126), box, 1, border_radius=4)
+        self.draw_multiline(20, 252, text, self.font, (242, 245, 220), box.width - 20)
 
     def draw_toast(self, text):
-        box = pygame.Rect(28, 520, min(730, 50 + self.font.size(text)[0]), 50)
-        pygame.draw.rect(self.screen, (17, 29, 25), box, border_radius=8)
-        pygame.draw.rect(self.screen, (212, 185, 101), box, 2, border_radius=8)
-        self.screen.blit(self.small.render(text, True, (249, 238, 181)), (box.x + 14, box.y + 15))
+        box = pygame.Rect(10, 284, min(WIDTH - 20, 22 + self.small.size(text)[0]), 26)
+        pygame.draw.rect(self.screen, (17, 29, 25), box, border_radius=3)
+        pygame.draw.rect(self.screen, (212, 185, 101), box, 1, border_radius=3)
+        self.screen.blit(self.small.render(text, True, (249, 238, 181)), (box.x + 8, box.y + 7))
 
     def draw_multiline(self, x, y, text, font, color, max_width):
         line, lines = "", []

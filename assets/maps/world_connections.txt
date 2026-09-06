@@ -1,0 +1,12 @@
+箱庭尺寸：120×120 格
+
+地图位置：
+- moonmountain_1 = moonmountain，位置 (25,0)，尺寸 40×40，旋转 0°
+- route1_1 = route1，位置 (22,40)，尺寸 36×24，旋转 0°
+- home_1 = home，位置 (26,64)，尺寸 24×18，旋转 0°
+- forest1_1 = forest1，位置 (4,62)，尺寸 22×21，旋转 0°
+
+地图连接：
+- moonmountain_1.bottom → route1_1.top，世界 x=25..58，前者局部 0..33，后者局部 3..36
+- route1_1.bottom → home_1.top，世界 x=26..50，前者局部 4..28，后者局部 0..24
+- forest1_1.right → home_1.left，世界 y=64..82，前者局部 2..20，后者局部 0..18

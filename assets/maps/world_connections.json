@@ -1,0 +1,275 @@
+{
+  "world_size": [
+    120,
+    120
+  ],
+  "maps": [
+    {
+      "id": "moonmountain_1",
+      "map": "moonmountain",
+      "rotation": 0,
+      "position": {
+        "x": 25,
+        "y": 0
+      },
+      "size": {
+        "width": 40,
+        "height": 40
+      },
+      "bounds": {
+        "left": 25,
+        "top": 0,
+        "right": 65,
+        "bottom": 40
+      },
+      "edges": {
+        "left": {
+          "x": 25,
+          "y": [
+            0,
+            40
+          ]
+        },
+        "right": {
+          "x": 65,
+          "y": [
+            0,
+            40
+          ]
+        },
+        "top": {
+          "y": 0,
+          "x": [
+            25,
+            65
+          ]
+        },
+        "bottom": {
+          "y": 40,
+          "x": [
+            25,
+            65
+          ]
+        }
+      }
+    },
+    {
+      "id": "route1_1",
+      "map": "route1",
+      "rotation": 0,
+      "position": {
+        "x": 22,
+        "y": 40
+      },
+      "size": {
+        "width": 36,
+        "height": 24
+      },
+      "bounds": {
+        "left": 22,
+        "top": 40,
+        "right": 58,
+        "bottom": 64
+      },
+      "edges": {
+        "left": {
+          "x": 22,
+          "y": [
+            40,
+            64
+          ]
+        },
+        "right": {
+          "x": 58,
+          "y": [
+            40,
+            64
+          ]
+        },
+        "top": {
+          "y": 40,
+          "x": [
+            22,
+            58
+          ]
+        },
+        "bottom": {
+          "y": 64,
+          "x": [
+            22,
+            58
+          ]
+        }
+      }
+    },
+    {
+      "id": "home_1",
+      "map": "home",
+      "rotation": 0,
+      "position": {
+        "x": 26,
+        "y": 64
+      },
+      "size": {
+        "width": 24,
+        "height": 18
+      },
+      "bounds": {
+        "left": 26,
+        "top": 64,
+        "right": 50,
+        "bottom": 82
+      },
+      "edges": {
+        "left": {
+          "x": 26,
+          "y": [
+            64,
+            82
+          ]
+        },
+        "right": {
+          "x": 50,
+          "y": [
+            64,
+            82
+          ]
+        },
+        "top": {
+          "y": 64,
+          "x": [
+            26,
+            50
+          ]
+        },
+        "bottom": {
+          "y": 82,
+          "x": [
+            26,
+            50
+          ]
+        }
+      }
+    },
+    {
+      "id": "forest1_1",
+      "map": "forest1",
+      "rotation": 0,
+      "position": {
+        "x": 4,
+        "y": 62
+      },
+      "size": {
+        "width": 22,
+        "height": 21
+      },
+      "bounds": {
+        "left": 4,
+        "top": 62,
+        "right": 26,
+        "bottom": 83
+      },
+      "edges": {
+        "left": {
+          "x": 4,
+          "y": [
+            62,
+            83
+          ]
+        },
+        "right": {
+          "x": 26,
+          "y": [
+            62,
+            83
+          ]
+        },
+        "top": {
+          "y": 62,
+          "x": [
+            4,
+            26
+          ]
+        },
+        "bottom": {
+          "y": 83,
+          "x": [
+            4,
+            26
+          ]
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "type": "edge",
+      "axis": "horizontal",
+      "from": "moonmountain_1",
+      "to": "route1_1",
+      "from_edge": "bottom",
+      "to_edge": "top",
+      "world_range": {
+        "axis": "x",
+        "start": 25,
+        "end": 58
+      },
+      "from_local_range": {
+        "axis": "x",
+        "start": 0,
+        "end": 33
+      },
+      "to_local_range": {
+        "axis": "x",
+        "start": 3,
+        "end": 36
+      }
+    },
+    {
+      "type": "edge",
+      "axis": "horizontal",
+      "from": "route1_1",
+      "to": "home_1",
+      "from_edge": "bottom",
+      "to_edge": "top",
+      "world_range": {
+        "axis": "x",
+        "start": 26,
+        "end": 50
+      },
+      "from_local_range": {
+        "axis": "x",
+        "start": 4,
+        "end": 28
+      },
+      "to_local_range": {
+        "axis": "x",
+        "start": 0,
+        "end": 24
+      }
+    },
+    {
+      "type": "edge",
+      "axis": "vertical",
+      "from": "forest1_1",
+      "to": "home_1",
+      "from_edge": "right",
+      "to_edge": "left",
+      "world_range": {
+        "axis": "y",
+        "start": 64,
+        "end": 82
+      },
+      "from_local_range": {
+        "axis": "y",
+        "start": 2,
+        "end": 20
+      },
+      "to_local_range": {
+        "axis": "y",
+        "start": 0,
+        "end": 18
+      }
+    }
+  ]
+}
