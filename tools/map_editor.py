@@ -41,6 +41,8 @@ NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
 OPEN_BUTTON = pygame.Rect(24, 670, 320, 38)
 WORLD_BUTTON = pygame.Rect(24, 715, 320, 38)
 WORLD_LAYOUT = OUT / "world_layout.json"
+WORLD_DEFAULT_SIZE = (120, 80)
+WORLD_MAX_SIZE = (120, 80)
 
 
 def load_tiles():
@@ -113,9 +115,14 @@ def run_world_editor(screen, font, small, all_meta):
             world_meta = json.loads(WORLD_LAYOUT.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             world_meta = {}
-    world_w, world_h = world_meta.get("size", [80, 60])
-    world_w = max(1, min(120, int(world_w)))
-    world_h = max(1, min(100, int(world_h)))
+    stored_world_size = world_meta.get("size")
+    # The original workspace used 80×60. Migrate that implicit default to the
+    # larger 120×80 canvas while preserving all existing map coordinates.
+    if not stored_world_size or list(stored_world_size) == [80, 60]:
+        stored_world_size = WORLD_DEFAULT_SIZE
+    world_w, world_h = stored_world_size
+    world_w = max(1, min(WORLD_MAX_SIZE[0], int(world_w)))
+    world_h = max(1, min(WORLD_MAX_SIZE[1], int(world_h)))
     placements = [dict(item) for item in world_meta.get("placements", [])
                   if item.get("map") in all_meta]
     used_ids = set()
@@ -155,12 +162,18 @@ def run_world_editor(screen, font, small, all_meta):
         """Fit or zoom the world canvas into the available workspace."""
         nonlocal frame, list_rect, view_tile, canvas, pan_x, pan_y
         screen_w, screen_h = screen.get_size()
-        sidebar_width = 370 if sidebar_visible else 0
-        frame = pygame.Rect(sidebar_width + 20, 70,
-                            max(240, screen_w - sidebar_width - 40),
-                            max(240, screen_h - 130))
+        if sidebar_visible:
+            sidebar_width = 370
+            frame = pygame.Rect(sidebar_width + 20, 70,
+                                max(240, screen_w - sidebar_width - 40),
+                                max(240, screen_h - 130))
+        else:
+            # Use nearly the entire window in large-canvas mode.
+            frame = pygame.Rect(10, 55, max(240, screen_w - 20), max(240, screen_h - 80))
         list_rect = pygame.Rect(18, 110, 340, max(180, screen_h - 210))
-        fit_tile = min(16, frame.width // max(1, world_w), frame.height // max(1, world_h))
+        # Do not cap the fit scale at the old 16px value. In large-canvas mode
+        # the wider frame should visibly provide more room when possible.
+        fit_tile = min(frame.width // max(1, world_w), frame.height // max(1, world_h))
         view_tile = max(4, int(fit_tile * zoom))
         canvas_width = world_w * view_tile
         canvas_height = world_h * view_tile
@@ -168,12 +181,11 @@ def run_world_editor(screen, font, small, all_meta):
         max_pan_y = max(0, canvas_height - frame.height)
         pan_x = min(max(0, pan_x), max_pan_x)
         pan_y = min(max(0, pan_y), max_pan_y)
-        canvas = pygame.Rect(
-            frame.x + (frame.width - canvas_width) // 2 - pan_x,
-            frame.y + (frame.height - canvas_height) // 2 - pan_y,
-            canvas_width,
-            canvas_height,
-        )
+        canvas_x = (frame.x + (frame.width - canvas_width) // 2
+                    if canvas_width <= frame.width else frame.x - pan_x)
+        canvas_y = (frame.y + (frame.height - canvas_height) // 2
+                    if canvas_height <= frame.height else frame.y - pan_y)
+        canvas = pygame.Rect(canvas_x, canvas_y, canvas_width, canvas_height)
 
     update_view()
 
@@ -335,8 +347,12 @@ def run_world_editor(screen, font, small, all_meta):
                     running = False
                 elif event.key == pygame.K_TAB:
                     sidebar_visible = not sidebar_visible
+                    if not sidebar_visible and zoom <= 1.0:
+                        zoom = 1.25
+                    elif sidebar_visible and zoom == 1.25:
+                        zoom = 1.0
                     update_view()
-                    show("已切换大画布模式；Tab 可显示或隐藏左侧地图栏。", 3)
+                    show("已切换大画布模式；Tab 可显示或隐藏左侧地图栏，0 可恢复适配。", 3)
                 elif event.key == pygame.K_0:
                     zoom = 1.0
                     pan_x = pan_y = 0
