@@ -31,6 +31,8 @@ SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
 CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
 MAP_FRAME = pygame.Rect(400, 78, 768, 576)
+PAGE_BUTTON = pygame.Rect(24, 306, 320, 30)
+SAVE_BUTTON = pygame.Rect(24, 502, 320, 31)
 SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
 PASTE_BUTTON = pygame.Rect(24, 580, 320, 38)
 NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
@@ -113,8 +115,9 @@ def main(name: str):
     notice_lines = []
     notice_color = (142, 230, 151)
     notice_until = 0
-    dialog_mode = False
+    dialog_mode = None
     new_map_input = ""
+    page_input = ""
 
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
@@ -157,8 +160,29 @@ def main(name: str):
 
     def enter_new_map():
         nonlocal dialog_mode, new_map_input
-        dialog_mode = True
+        dialog_mode = "new"
         new_map_input = ""
+
+    def enter_page_jump():
+        nonlocal dialog_mode, page_input
+        dialog_mode = "page"
+        page_input = ""
+
+    def change_palette_page():
+        nonlocal dialog_mode, page_input, palette_page
+        page_count = max(1, (len(tiles) + 31) // 32)
+        try:
+            requested = int(page_input)
+        except ValueError:
+            show_notice([f"请输入 1 到 {page_count} 之间的页码。"], (255, 158, 120), 5)
+            return
+        if not 1 <= requested <= page_count:
+            show_notice([f"页码超出范围：当前有 {page_count} 页图块。"], (255, 158, 120), 5)
+            return
+        palette_page = requested - 1
+        page_input = ""
+        dialog_mode = None
+        show_notice([f"已跳转到图块第 {requested} 页（共 {page_count} 页）。"], (142, 230, 151), 4)
 
     def create_new_map():
         nonlocal name, layers, blocked, start, dialog_mode, new_map_input
@@ -195,7 +219,7 @@ def main(name: str):
         layers = [pygame.Surface((MAP_W * TILE, MAP_H * TILE), pygame.SRCALPHA) for _ in range(3)]
         blocked = set()
         start = (0, 0)
-        dialog_mode = False
+        dialog_mode = None
         new_map_input = ""
         pygame.display.set_caption(f"三层地图编辑器 - {name}")
         save()
@@ -314,14 +338,24 @@ def main(name: str):
             elif event.type == pygame.KEYDOWN:
                 if dialog_mode:
                     if event.key == pygame.K_ESCAPE:
-                        dialog_mode = False
+                        dialog_mode = None
                         new_map_input = ""
+                        page_input = ""
                     elif event.key == pygame.K_RETURN:
-                        create_new_map()
+                        if dialog_mode == "new":
+                            create_new_map()
+                        else:
+                            change_palette_page()
                     elif event.key == pygame.K_BACKSPACE:
-                        new_map_input = new_map_input[:-1]
+                        if dialog_mode == "new":
+                            new_map_input = new_map_input[:-1]
+                        else:
+                            page_input = page_input[:-1]
                     elif getattr(event, "unicode", "").isprintable():
-                        new_map_input += event.unicode
+                        if dialog_mode == "new":
+                            new_map_input += event.unicode
+                        else:
+                            page_input += event.unicode
                     continue
                 if event.key == pygame.K_ESCAPE:
                     running = False
@@ -331,6 +365,8 @@ def main(name: str):
                     enter_select()
                 elif event.key == pygame.K_n:
                     enter_new_map()
+                elif event.key == pygame.K_g:
+                    enter_page_jump()
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -349,14 +385,21 @@ def main(name: str):
                 elif event.key == pygame.K_p:
                     mode = "start"
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                    palette_page = max(0, palette_page + (1 if event.key == pygame.K_RIGHT else -1))
+                    page_count = max(1, (len(tiles) + 31) // 32)
+                    palette_page = max(0, min(page_count - 1, palette_page + (1 if event.key == pygame.K_RIGHT else -1)))
                 elif event.key == pygame.K_PAGEUP:
                     palette_page = max(0, palette_page - 1)
                 elif event.key == pygame.K_PAGEDOWN:
-                    palette_page += 1
+                    palette_page = min(max(0, (len(tiles) + 31) // 32 - 1), palette_page + 1)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button in (1, 3):
                     if dialog_mode:
+                        continue
+                    if event.button == 1 and SAVE_BUTTON.collidepoint(event.pos):
+                        save()
+                        continue
+                    if event.button == 1 and PAGE_BUTTON.collidepoint(event.pos):
+                        enter_page_jump()
                         continue
                     if event.button == 1 and SELECT_BUTTON.collidepoint(event.pos):
                         enter_select()
@@ -474,11 +517,15 @@ def main(name: str):
             screen.blit(tile_img, (palette.x + x * 40, palette.y + y * 40))
             if idx == tile_index:
                 pygame.draw.rect(screen, (255, 224, 95), (palette.x + x * 40, palette.y + y * 40, 40, 40), 3)
-        screen.blit(small.render(f"图块编号：{tile_index}   页面：{palette_page}（←/→翻页）", True, (205, 220, 198)), (24, 290))
-        screen.blit(small.render("C：碰撞标记模式（仅当前层）", True, (205, 220, 198)), (24, 326))
-        screen.blit(small.render("P：设置出生点（点击地图格）", True, (205, 220, 198)), (24, 351))
-        screen.blit(small.render("M 或按钮：框选；Shift+左键拖动也可直接框选", True, (205, 220, 198)), (24, 375))
-        screen.blit(small.render("4：查看游戏最终合成画面，再按 1/2/3 返回编辑", True, (205, 220, 198)), (24, 398))
+        page_count = max(1, (len(tiles) + 31) // 32)
+        screen.blit(small.render(f"图块编号：{tile_index}   页面：{palette_page + 1}/{page_count}", True, (205, 220, 198)), (24, 290))
+        pygame.draw.rect(screen, (48, 74, 64), PAGE_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (137, 171, 139), PAGE_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("跳转图块页  [G]", True, (245, 246, 219)), (PAGE_BUTTON.x + 80, PAGE_BUTTON.y + 5))
+        screen.blit(small.render("C：碰撞标记模式（仅当前层）", True, (205, 220, 198)), (24, 344))
+        screen.blit(small.render("P：设置出生点（点击地图格）", True, (205, 220, 198)), (24, 367))
+        screen.blit(small.render("M 或按钮：框选；Shift+左键拖动也可直接框选", True, (205, 220, 198)), (24, 390))
+        screen.blit(small.render("4：查看游戏最终合成画面，再按 1/2/3 返回编辑", True, (205, 220, 198)), (24, 413))
         status = f"模式：{mode}" + (" *未保存" if dirty else "")
         screen.blit(font.render(status, True, (238, 194, 117)), (24, 435))
         if preview_mode:
@@ -486,6 +533,9 @@ def main(name: str):
         else:
             screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 460))
             screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
+        pygame.draw.rect(screen, (61, 109, 87) if dirty else (48, 74, 64), SAVE_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (142, 230, 151) if dirty else (137, 171, 139), SAVE_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("保存地图  [S]", True, (245, 246, 219)), (SAVE_BUTTON.x + 88, SAVE_BUTTON.y + 5))
         pygame.draw.rect(screen, (61, 109, 87) if mode == "select" else (48, 74, 64), SELECT_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (255, 228, 92) if mode == "select" else (137, 171, 139), SELECT_BUTTON, 2, border_radius=5)
         screen.blit(font.render("框选工具  [M]", True, (245, 246, 219)), (SELECT_BUTTON.x + 84, SELECT_BUTTON.y + 8))
@@ -506,11 +556,17 @@ def main(name: str):
             dialog = pygame.Rect(430, 250, 700, 190)
             pygame.draw.rect(screen, (28, 55, 45), dialog, border_radius=10)
             pygame.draw.rect(screen, (255, 228, 92), dialog, 3, border_radius=10)
-            screen.blit(font.render("新建三层地图", True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
-            screen.blit(small.render("输入：地图名 宽 高（例如 forest2 20 14）", True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
+            is_new_map = dialog_mode == "new"
+            dialog_title = "新建三层地图" if is_new_map else "跳转图块页"
+            dialog_hint = "输入：地图名 宽 高（例如 forest2 20 14）" if is_new_map else f"输入页码：1 到 {page_count}"
+            dialog_value = new_map_input if is_new_map else page_input
+            dialog_placeholder = "地图名 宽 高" if is_new_map else "页码"
+            dialog_footer = "Enter 创建   Esc 取消   范围：宽 1-24，高 1-18" if is_new_map else "Enter 跳转   Esc 取消"
+            screen.blit(font.render(dialog_title, True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
+            screen.blit(small.render(dialog_hint, True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
             pygame.draw.rect(screen, (12, 25, 22), (dialog.x + 24, dialog.y + 92, dialog.width - 48, 42), border_radius=5)
-            screen.blit(font.render(new_map_input or "地图名 宽 高", True, (245, 246, 219)), (dialog.x + 36, dialog.y + 102))
-            screen.blit(small.render("Enter 创建   Esc 取消   范围：宽 1-24，高 1-18", True, (220, 235, 210)), (dialog.x + 24, dialog.y + 150))
+            screen.blit(font.render(dialog_value or dialog_placeholder, True, (245, 246, 219)), (dialog.x + 36, dialog.y + 102))
+            screen.blit(small.render(dialog_footer, True, (220, 235, 210)), (dialog.x + 24, dialog.y + 150))
         pygame.display.flip()
         clock.tick(60)
     if dirty:
