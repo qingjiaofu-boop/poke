@@ -29,15 +29,18 @@ OUT = ASSETS / "maps"
 MAP_W, MAP_H, TILE = 24, 18, 32
 MAX_MAP_W, MAX_MAP_H = 40, 40
 VIEW_TILE = TILE
-SCREEN = (1200, 720)
+SCREEN = (1600, 900)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
-CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
-MAP_FRAME = pygame.Rect(400, 78, 768, 576)
+CANVAS = pygame.Rect(450, 78, MAP_W * TILE, MAP_H * TILE)
+MAP_FRAME = pygame.Rect(450, 78, 1120, 760)
 PAGE_BUTTON = pygame.Rect(24, 306, 320, 30)
 SAVE_BUTTON = pygame.Rect(24, 502, 320, 31)
 SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
 PASTE_BUTTON = pygame.Rect(24, 580, 320, 38)
 NEW_BUTTON = pygame.Rect(24, 625, 320, 38)
+OPEN_BUTTON = pygame.Rect(24, 670, 320, 38)
+WORLD_BUTTON = pygame.Rect(24, 715, 320, 38)
+WORLD_LAYOUT = OUT / "world_layout.json"
 
 
 def load_tiles():
@@ -77,6 +80,186 @@ def make_font(size: int):
             except pygame.error:
                 continue
     return pygame.font.Font(None, size)
+
+
+def load_map_surface_set(map_name: str, spec: dict):
+    """Load the three exported layers for a map listed in outdoor_maps.json."""
+    layers = spec.get("layers", {})
+    result = []
+    for suffix in ("lower", "current", "upper"):
+        relative = layers.get(suffix, f"maps/{map_name}_{suffix}.png")
+        path = ASSETS / relative
+        if not path.exists():
+            path = OUT / f"{map_name}_{suffix}.png"
+        try:
+            result.append(pygame.image.load(str(path)).convert_alpha())
+        except (pygame.error, OSError):
+            size = spec.get("size", [24, 18])
+            result.append(pygame.Surface((int(size[0]) * TILE, int(size[1]) * TILE), pygame.SRCALPHA))
+    return result
+
+
+def run_world_editor(screen, font, small, all_meta):
+    """Edit and preview a simple multi-map overworld layout.
+
+    Placement coordinates are stored in map cells, so the layout remains
+    independent of the editor's display zoom.  The generated PNGs are useful
+    as a complete stitched background, while the JSON remains the editable
+    source of truth.
+    """
+    world_meta = {}
+    if WORLD_LAYOUT.exists():
+        try:
+            world_meta = json.loads(WORLD_LAYOUT.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            world_meta = {}
+    world_w, world_h = world_meta.get("size", [80, 60])
+    world_w = max(1, min(120, int(world_w)))
+    world_h = max(1, min(100, int(world_h)))
+    placements = [dict(item) for item in world_meta.get("placements", [])
+                  if item.get("map") in all_meta]
+    map_names = list(all_meta.keys())
+    map_surfaces = {map_name: load_map_surface_set(map_name, all_meta[map_name])
+                    for map_name in map_names}
+    selected = map_names.index(placements[0]["map"]) if placements else 0
+    selected = min(selected, max(0, len(map_names) - 1))
+    notice = ""
+    notice_until = 0
+    dirty = False
+    preview_only = False
+    clock = pygame.time.Clock()
+    frame = pygame.Rect(390, 70, 1180, 780)
+    list_rect = pygame.Rect(18, 110, 340, 690)
+    view_tile = max(8, min(16, frame.width // world_w, frame.height // world_h))
+    canvas = pygame.Rect(
+        frame.x + (frame.width - world_w * view_tile) // 2,
+        frame.y + (frame.height - world_h * view_tile) // 2,
+        world_w * view_tile,
+        world_h * view_tile,
+    )
+
+    def show(text, seconds=4):
+        nonlocal notice, notice_until
+        notice = text
+        notice_until = pygame.time.get_ticks() + seconds * 1000
+
+    def save_world():
+        nonlocal dirty
+        WORLD_LAYOUT.parent.mkdir(parents=True, exist_ok=True)
+        data = {"size": [world_w, world_h], "placements": placements,
+                "preview": {s: f"maps/world_{s}.png" for s in ("lower", "current", "upper")}}
+        WORLD_LAYOUT.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        composites = [pygame.Surface((world_w * TILE, world_h * TILE), pygame.SRCALPHA) for _ in range(3)]
+        for item in placements:
+            spec = all_meta.get(item["map"], {})
+            for index, image in enumerate(map_surfaces[item["map"]]):
+                composites[index].blit(image, (int(item.get("x", 0)) * TILE, int(item.get("y", 0)) * TILE))
+        for index, suffix in enumerate(("lower", "current", "upper")):
+            pygame.image.save(composites[index], str(OUT / f"world_{suffix}.png"))
+        dirty = False
+        show("箱庭布局已保存，并生成 world_lower/current/upper.png", 5)
+
+    def map_card_at(pos):
+        if not list_rect.collidepoint(pos):
+            return None
+        index = (pos[1] - list_rect.y) // 42
+        return index if 0 <= index < len(map_names) else None
+
+    def world_cell_at(pos):
+        if not canvas.collidepoint(pos):
+            return None
+        return ((pos[0] - canvas.x) // view_tile, (pos[1] - canvas.y) // view_tile)
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_s:
+                    save_world()
+                elif event.key == pygame.K_4:
+                    preview_only = not preview_only
+                elif event.key == pygame.K_RETURN and dirty:
+                    save_world()
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    card = map_card_at(event.pos)
+                    if card is not None:
+                        selected = card
+                        continue
+                    cell = world_cell_at(event.pos)
+                    if cell is not None and map_names:
+                        map_name = map_names[selected]
+                        spec = all_meta[map_name]
+                        size = spec.get("size", [24, 18])
+                        map_width, map_height = int(size[0]), int(size[1])
+                        x = min(max(0, cell[0]), max(0, world_w - map_width))
+                        y = min(max(0, cell[1]), max(0, world_h - map_height))
+                        placements.append({"map": map_name, "x": x, "y": y})
+                        dirty = True
+                        show(f"已放置 {map_name}，左键可继续放置，右键删除地图块。")
+                elif event.button == 3:
+                    cell = world_cell_at(event.pos)
+                    if cell is not None:
+                        for index in range(len(placements) - 1, -1, -1):
+                            item = placements[index]
+                            spec = all_meta.get(item["map"], {})
+                            width, height = map(int, spec.get("size", [24, 18]))
+                            if int(item.get("x", 0)) <= cell[0] < int(item.get("x", 0)) + width and int(item.get("y", 0)) <= cell[1] < int(item.get("y", 0)) + height:
+                                removed = placements.pop(index)
+                                dirty = True
+                                show(f"已移除 {removed['map']}。")
+                                break
+
+        screen.fill((35, 48, 43))
+        screen.blit(font.render("箱庭地图拼接工作区", True, (242, 244, 218)), (18, 28))
+        screen.blit(small.render("选择左侧地图后，左键在右侧放置；右键删除；S 保存并生成整体预览；Esc 返回单地图编辑", True, (190, 210, 190)), (390, 40))
+        pygame.draw.rect(screen, (20, 30, 28), list_rect, border_radius=8)
+        screen.blit(font.render("可用地图", True, (242, 244, 218)), (32, 78))
+        for index, map_name in enumerate(map_names):
+            y = list_rect.y + index * 42
+            if y + 38 > list_rect.bottom:
+                break
+            active = index == selected
+            rect = pygame.Rect(list_rect.x + 8, y, list_rect.width - 16, 36)
+            pygame.draw.rect(screen, (61, 109, 87) if active else (42, 61, 52), rect, border_radius=5)
+            pygame.draw.rect(screen, (255, 228, 92) if active else (100, 125, 105), rect, 2, border_radius=5)
+            size = all_meta[map_name].get("size", [24, 18])
+            screen.blit(small.render(f"{map_name}   {size[0]}×{size[1]}", True, (245, 246, 219)), (rect.x + 12, rect.y + 9))
+        selected_name = map_names[selected] if map_names else "无地图"
+        screen.blit(small.render(f"当前选择：{selected_name}", True, (220, 235, 210)), (32, 820))
+        screen.blit(font.render(f"箱庭尺寸：{world_w}×{world_h} 格", True, (242, 244, 218)), (390, 860))
+        pygame.draw.rect(screen, (180, 210, 175), canvas, 2)
+        # Draw each placed map as a composited preview plus a colored boundary.
+        for index, item in enumerate(placements):
+            spec = all_meta.get(item["map"], {})
+            images = map_surfaces[item["map"]]
+            composed = pygame.Surface(images[0].get_size(), pygame.SRCALPHA)
+            for image in images:
+                composed.blit(image, (0, 0))
+            width, height = composed.get_width() // TILE, composed.get_height() // TILE
+            preview = pygame.transform.scale(composed, (width * view_tile, height * view_tile))
+            x = canvas.x + int(item.get("x", 0)) * view_tile
+            y = canvas.y + int(item.get("y", 0)) * view_tile
+            screen.blit(preview, (x, y))
+            pygame.draw.rect(screen, (255, 228, 92) if index == len(placements) - 1 else (112, 178, 150),
+                             (x, y, width * view_tile, height * view_tile), 2)
+            if not preview_only:
+                label = small.render(item["map"], True, (255, 250, 190))
+                screen.blit(label, (x + 4, y + 3))
+        if pygame.time.get_ticks() < notice_until:
+            box = pygame.Rect(410, 735, 700, 48)
+            pygame.draw.rect(screen, (33, 93, 62), box, border_radius=6)
+            pygame.draw.rect(screen, (142, 230, 151), box, 2, border_radius=6)
+            screen.blit(small.render(notice, True, (232, 255, 218)), (box.x + 14, box.y + 14))
+        pygame.display.flip()
+        clock.tick(30)
+    if dirty:
+        save_world()
 
 
 def main(name: str):
@@ -127,6 +310,7 @@ def main(name: str):
     dialog_mode = None
     new_map_input = ""
     page_input = ""
+    open_map_input = ""
 
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
@@ -171,6 +355,34 @@ def main(name: str):
         nonlocal dialog_mode, new_map_input
         dialog_mode = "new"
         new_map_input = ""
+
+    def enter_open_map():
+        nonlocal dialog_mode, open_map_input
+        dialog_mode = "open"
+        open_map_input = ""
+
+    def open_existing_map():
+        nonlocal name, layers, blocked, start, dialog_mode, open_map_input, dirty
+        global MAP_W, MAP_H
+        map_name = open_map_input.strip()
+        if map_name not in all_meta:
+            show_notice([f"找不到地图 {map_name}。可用地图：{', '.join(all_meta) or '无'}"], (255, 158, 120), 6)
+            return
+        if dirty:
+            save()
+        name = map_name
+        spec = all_meta[name]
+        size = spec.get("size", [24, 18])
+        MAP_W = max(1, min(MAX_MAP_W, int(size[0])))
+        MAP_H = max(1, min(MAX_MAP_H, int(size[1])))
+        update_canvas()
+        layers = [load_or_blank(OUT / f"{name}_{suffix}.png") for suffix in ("lower", "current", "upper")]
+        blocked = {tuple(item) for item in spec.get("blocked", [])}
+        start = tuple(spec.get("start", [0, 0]))
+        dialog_mode = None
+        open_map_input = ""
+        pygame.display.set_caption(f"三层地图编辑器 - {name}")
+        show_notice([f"已打开地图：{name}（{MAP_W}×{MAP_H}）", "可以继续编辑三层、碰撞和出生点。"], (142, 230, 151), 5)
 
     def enter_page_jump():
         nonlocal dialog_mode, page_input
@@ -346,19 +558,26 @@ def main(name: str):
                         dialog_mode = None
                         new_map_input = ""
                         page_input = ""
+                        open_map_input = ""
                     elif event.key == pygame.K_RETURN:
                         if dialog_mode == "new":
                             create_new_map()
+                        elif dialog_mode == "open":
+                            open_existing_map()
                         else:
                             change_palette_page()
                     elif event.key == pygame.K_BACKSPACE:
                         if dialog_mode == "new":
                             new_map_input = new_map_input[:-1]
+                        elif dialog_mode == "open":
+                            open_map_input = open_map_input[:-1]
                         else:
                             page_input = page_input[:-1]
                     elif getattr(event, "unicode", "").isprintable():
                         if dialog_mode == "new":
                             new_map_input += event.unicode
+                        elif dialog_mode == "open":
+                            open_map_input += event.unicode
                         else:
                             page_input += event.unicode
                     continue
@@ -370,8 +589,15 @@ def main(name: str):
                     enter_select()
                 elif event.key == pygame.K_n:
                     enter_new_map()
+                elif event.key == pygame.K_o:
+                    enter_open_map()
                 elif event.key == pygame.K_g:
                     enter_page_jump()
+                elif event.key == pygame.K_w:
+                    if dirty:
+                        save()
+                    run_world_editor(screen, font, small, all_meta)
+                    pygame.display.set_caption(f"三层地图编辑器 - {name}")
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -414,6 +640,15 @@ def main(name: str):
                         continue
                     if event.button == 1 and NEW_BUTTON.collidepoint(event.pos):
                         enter_new_map()
+                        continue
+                    if event.button == 1 and OPEN_BUTTON.collidepoint(event.pos):
+                        enter_open_map()
+                        continue
+                    if event.button == 1 and WORLD_BUTTON.collidepoint(event.pos):
+                        if dirty:
+                            save()
+                        run_world_editor(screen, font, small, all_meta)
+                        pygame.display.set_caption(f"三层地图编辑器 - {name}")
                         continue
                     cell = cell_at(event.pos)
                     if preview_mode:
@@ -518,7 +753,7 @@ def main(name: str):
         layer_color = ((92, 210, 255), (255, 190, 75), (205, 145, 255))[layer]
         screen.blit(font.render(f"地图：{name}   当前层：{layer_name}", True, (242, 244, 218) if preview_mode else layer_color), (400, 28))
         screen.blit(small.render("1/2/3 切层  4游戏预览  M框选  Ctrl+C复制  Ctrl+V粘贴  S保存  Esc退出", True, (190, 210, 190)), (400, 50))
-        pygame.draw.rect(screen, (20, 30, 28), (8, 78, 368, 620), border_radius=8)
+        pygame.draw.rect(screen, (20, 30, 28), (8, 78, 368, 810), border_radius=8)
         screen.blit(font.render("Outside 图块（资源区）", True, (242, 244, 218)), (24, 88))
         palette = pygame.Rect(24, 110, 8 * 40, 4 * 40)
         for i in range(32):
@@ -561,7 +796,14 @@ def main(name: str):
         pygame.draw.rect(screen, (61, 109, 87) if dialog_mode else (48, 74, 64), NEW_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (255, 228, 92) if dialog_mode else (137, 171, 139), NEW_BUTTON, 2, border_radius=5)
         screen.blit(font.render("新建地图  [N]", True, (245, 246, 219)), (NEW_BUTTON.x + 80, NEW_BUTTON.y + 8))
-        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 672))
+        pygame.draw.rect(screen, (48, 74, 64), OPEN_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (137, 171, 139), OPEN_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("打开地图  [O]", True, (245, 246, 219)), (OPEN_BUTTON.x + 88, OPEN_BUTTON.y + 8))
+        pygame.draw.rect(screen, (48, 74, 64), WORLD_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (137, 171, 139), WORLD_BUTTON, 2, border_radius=5)
+        screen.blit(font.render("箱庭拼接  [W]", True, (245, 246, 219)), (WORLD_BUTTON.x + 80, WORLD_BUTTON.y + 8))
+        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 770))
+        screen.blit(small.render("O 打开已有地图；W 编辑地图拼接布局", True, (175, 196, 175)), (24, 795))
         if dialog_mode:
             overlay = pygame.Surface(SCREEN, pygame.SRCALPHA)
             overlay.fill((8, 15, 13, 185))
@@ -570,11 +812,14 @@ def main(name: str):
             pygame.draw.rect(screen, (28, 55, 45), dialog, border_radius=10)
             pygame.draw.rect(screen, (255, 228, 92), dialog, 3, border_radius=10)
             is_new_map = dialog_mode == "new"
-            dialog_title = "新建三层地图" if is_new_map else "跳转图块页"
-            dialog_hint = "输入：地图名 宽 高（例如 forest2 20 14）" if is_new_map else f"输入页码：1 到 {page_count}"
-            dialog_value = new_map_input if is_new_map else page_input
-            dialog_placeholder = "地图名 宽 高" if is_new_map else "页码"
-            dialog_footer = f"Enter 创建   Esc 取消   范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}" if is_new_map else "Enter 跳转   Esc 取消"
+            is_open_map = dialog_mode == "open"
+            dialog_title = "新建三层地图" if is_new_map else ("打开已有地图" if is_open_map else "跳转图块页")
+            dialog_hint = ("输入：地图名 宽 高（例如 forest2 20 14）" if is_new_map else
+                           (f"输入地图名：{', '.join(all_meta) or '无可用地图'}" if is_open_map else f"输入页码：1 到 {page_count}"))
+            dialog_value = new_map_input if is_new_map else (open_map_input if is_open_map else page_input)
+            dialog_placeholder = "地图名 宽 高" if is_new_map else ("地图名" if is_open_map else "页码")
+            dialog_footer = (f"Enter 创建   Esc 取消   范围：宽 1-{MAX_MAP_W}，高 1-{MAX_MAP_H}" if is_new_map else
+                             ("Enter 打开   Esc 取消" if is_open_map else "Enter 跳转   Esc 取消"))
             screen.blit(font.render(dialog_title, True, (245, 246, 219)), (dialog.x + 24, dialog.y + 20))
             screen.blit(small.render(dialog_hint, True, (220, 235, 210)), (dialog.x + 24, dialog.y + 62))
             pygame.draw.rect(screen, (12, 25, 22), (dialog.x + 24, dialog.y + 92, dialog.width - 48, 42), border_radius=5)
