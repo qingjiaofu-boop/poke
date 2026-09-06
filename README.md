@@ -5,28 +5,30 @@
 ## 运行
 
 ```powershell
-cd E:\openProject\stc_pokemon_game
+cd poke
+python -m pip install -r requirements.txt
 python adventure.py
 ```
 
-连接 STC-B 时（可选）：
+## 连接 STC-B 开发板
 
-```powershell
-python -m pip install --proxy http://127.0.0.1:7897 pyserial pygame pillow
-python adventure.py COM3
-```
-
-如果 Clash 没有运行，去掉 `--proxy http://127.0.0.1:7897`；如果更换了 Clash 端口，把 `7897` 改成设置页中显示的端口。
-
-方向键和 Enter 可演示操作，R 重开，V 模拟一次震动。也可以双击 `run.bat` 启动键盘演示。
-
-查看当前串口：
+使用 USB 线将 STC-B 学习板连接到电脑，并确认板上已经烧录本项目的固件。先查询 Windows 分配的串口号：
 
 ```powershell
 python -c "from serial.tools import list_ports; print([(p.device, p.description) for p in list_ports.comports()])"
 ```
 
-把启动命令中的端口换成实际端口，例如 `python adventure.py COM9`；若端口被 Keil、串口助手或其他程序占用，先关闭占用它的程序。当前电脑检测到 `COM8` 和 `COM9`，其中 `COM8` 曾被占用，建议先试 `COM9`。
+将输出中的端口号代入启动命令，例如：
+
+```powershell
+python adventure.py COM3
+```
+
+如果暂时没有连接开发板，可以直接运行 `python adventure.py`，使用电脑键盘演示。
+
+方向键和 Enter 可演示操作，R 重开，V 模拟一次震动。也可以双击 `run.bat` 启动键盘演示。
+
+如果串口无法打开，请关闭 Keil、串口助手等可能占用该端口的程序，然后重新启动游戏。
 
 ## 当前原型
 
@@ -51,7 +53,7 @@ python -c "from serial.tools import list_ports; print([(p.device, p.description)
 编辑器左侧是 `Outside.png` 图块资源区，右侧是 24×18 地图画布。鼠标选中图块后点击画布即可绘制，支持地面层、当前层、上层，以及当前层碰撞标记和出生点设置：
 
 ```powershell
-cd E:\openProject\stc_pokemon_game
+cd poke
 python tools/map_editor.py home       # 编辑父亲的家
 python tools/map_editor.py friend     # 编辑青梅空地
 python tools/map_editor.py route      # 编辑 1 号道路
