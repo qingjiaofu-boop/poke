@@ -31,6 +31,7 @@ SCREEN = (1200, 720)
 # RPG Maker-like layout: resource palette on the left, map canvas on the right.
 CANVAS = pygame.Rect(400, 78, MAP_W * TILE, MAP_H * TILE)
 SELECT_BUTTON = pygame.Rect(24, 535, 320, 38)
+PASTE_BUTTON = pygame.Rect(24, 580, 320, 38)
 
 
 def load_tiles():
@@ -97,7 +98,9 @@ def main(name: str):
     clipboard_layers = None
     clipboard_blocked = set()
     paste_origin = None
-    saved_notice_until = 0
+    notice_lines = []
+    notice_color = (142, 230, 151)
+    notice_until = 0
 
     def cell_at(pos):
         if not CANVAS.collidepoint(pos):
@@ -131,6 +134,13 @@ def main(name: str):
         selection_start = None
         selection_cells = None
 
+    def show_notice(lines, color=(142, 230, 151), seconds=4):
+        """Display a clear, temporary editor confirmation on the map canvas."""
+        nonlocal notice_lines, notice_color, notice_until
+        notice_lines = list(lines)
+        notice_color = color
+        notice_until = pygame.time.get_ticks() + seconds * 1000
+
     def copy_selection():
         """Copy the same rectangular area from all three map layers."""
         nonlocal clipboard_layers, clipboard_blocked, mode
@@ -142,7 +152,22 @@ def main(name: str):
                             for surface in layers]
         clipboard_blocked = {(x - rect.x, y - rect.y)
                              for x, y in blocked if rect.collidepoint(x, y)}
-        mode = "paste_ready"
+        mode = "copied"
+        show_notice(
+            [f"已复制 {rect.w} × {rect.h} 格：地面层、当前层、上层", f"包含 {len(clipboard_blocked)} 个碰撞格。点击左侧“开始粘贴”或按 Ctrl+V。"],
+            (255, 228, 92),
+            5,
+        )
+
+    def enter_paste():
+        nonlocal mode, preview_mode, paste_origin
+        if clipboard_layers is None:
+            show_notice(["尚未复制内容。先用框选工具拖出范围，再按 Ctrl+C。"], (255, 158, 120))
+            return
+        preview_mode = False
+        mode = "paste"
+        paste_origin = None
+        show_notice(["粘贴模式：移动鼠标查看黄色目标框，左键放置。", "可连续点击重复粘贴；按 1/2/3 返回绘制。"], (255, 228, 92))
 
     def paste_at(origin):
         """Replace a destination rectangle with the copied three-layer area."""
@@ -171,9 +196,10 @@ def main(name: str):
         # repeatedly with successive clicks.
         mode = "paste"
         dirty = True
+        show_notice([f"已粘贴 {width} × {height} 格，三层与碰撞已同步。", "仍处于连续粘贴模式，可继续点击放置。"], (142, 230, 151))
 
     def save():
-        nonlocal dirty, saved_notice_until
+        nonlocal dirty
         OUT.mkdir(parents=True, exist_ok=True)
         for i, suffix in enumerate(("lower", "current", "upper")):
             pygame.image.save(layers[i], str(OUT / f"{name}_{suffix}.png"))
@@ -185,7 +211,11 @@ def main(name: str):
         }
         meta_path.write_text(json.dumps(all_meta, ensure_ascii=False, indent=2), encoding="utf-8")
         dirty = False
-        saved_notice_until = pygame.time.get_ticks() + 5000
+        show_notice(
+            ["地图已保存", f"assets/maps/{name}_lower.png  |  {name}_current.png  |  {name}_upper.png", "配置文件：assets/maps/outdoor_maps.json"],
+            (142, 230, 151),
+            5,
+        )
 
     def draw_layer_preview():
         """Show the active layer clearly and fade the other two layers."""
@@ -231,8 +261,7 @@ def main(name: str):
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
                     copy_selection()
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
-                    if clipboard_layers is not None:
-                        mode = "paste"
+                    enter_paste()
                 elif event.key == pygame.K_4:
                     preview_mode = not preview_mode
                     mode = "preview" if preview_mode else "paint"
@@ -256,6 +285,9 @@ def main(name: str):
                 if event.button in (1, 3):
                     if event.button == 1 and SELECT_BUTTON.collidepoint(event.pos):
                         enter_select()
+                        continue
+                    if event.button == 1 and PASTE_BUTTON.collidepoint(event.pos):
+                        enter_paste()
                         continue
                     cell = cell_at(event.pos)
                     if preview_mode:
@@ -326,13 +358,14 @@ def main(name: str):
             pygame.draw.rect(screen, (28, 68, 62), banner, border_radius=5)
             pygame.draw.rect(screen, (255, 228, 92), banner, 2, border_radius=5)
             screen.blit(font.render("已框选：按 Ctrl+C 复制三层内容", True, (255, 243, 180)), (banner.x + 12, banner.y + 8))
-        if pygame.time.get_ticks() < saved_notice_until:
-            notice = pygame.Rect(CANVAS.x + 10, CANVAS.bottom - 90, CANVAS.width - 20, 78)
+        if pygame.time.get_ticks() < notice_until and notice_lines:
+            notice_height = 16 + len(notice_lines) * 26
+            notice = pygame.Rect(CANVAS.x + 10, CANVAS.bottom - notice_height - 12, CANVAS.width - 20, notice_height)
             pygame.draw.rect(screen, (33, 93, 62), notice, border_radius=6)
-            pygame.draw.rect(screen, (142, 230, 151), notice, 2, border_radius=6)
-            screen.blit(font.render("地图已保存", True, (232, 255, 218)), (notice.x + 14, notice.y + 8))
-            screen.blit(small.render(f"assets/maps/{name}_lower.png  |  {name}_current.png  |  {name}_upper.png", True, (225, 244, 219)), (notice.x + 14, notice.y + 32))
-            screen.blit(small.render("配置文件：assets/maps/outdoor_maps.json", True, (225, 244, 219)), (notice.x + 14, notice.y + 48))
+            pygame.draw.rect(screen, notice_color, notice, 2, border_radius=6)
+            for index, text in enumerate(notice_lines):
+                text_font = font if index == 0 else small
+                screen.blit(text_font.render(text, True, (232, 255, 218)), (notice.x + 14, notice.y + 5 + index * 26))
         if not preview_mode and mode == "paste" and paste_origin is not None and clipboard_layers is not None:
             pw = clipboard_layers[0].get_width()
             ph = clipboard_layers[0].get_height()
@@ -378,9 +411,14 @@ def main(name: str):
         pygame.draw.rect(screen, (61, 109, 87) if mode == "select" else (48, 74, 64), SELECT_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (255, 228, 92) if mode == "select" else (137, 171, 139), SELECT_BUTTON, 2, border_radius=5)
         screen.blit(font.render("框选工具  [M]", True, (245, 246, 219)), (SELECT_BUTTON.x + 84, SELECT_BUTTON.y + 8))
-        screen.blit(small.render("框选后：Ctrl+C 复制，Ctrl+V 连续粘贴", True, (175, 196, 175)), (24, 590))
-        screen.blit(small.render("建议：地面层铺草地/道路，当前层放花草水边，", True, (175, 196, 175)), (24, 620))
-        screen.blit(small.render("上层放树冠；上层不会阻挡角色。", True, (175, 196, 175)), (24, 645))
+        paste_active = mode == "paste"
+        paste_enabled = clipboard_layers is not None
+        pygame.draw.rect(screen, (116, 88, 47) if paste_active else ((61, 109, 87) if paste_enabled else (48, 74, 64)), PASTE_BUTTON, border_radius=5)
+        pygame.draw.rect(screen, (255, 228, 92) if paste_active else ((142, 230, 151) if paste_enabled else (100, 125, 105)), PASTE_BUTTON, 2, border_radius=5)
+        paste_text = "开始粘贴  [Ctrl+V]" if paste_enabled else "开始粘贴  [先 Ctrl+C]"
+        screen.blit(font.render(paste_text, True, (245, 246, 219)), (PASTE_BUTTON.x + 65, PASTE_BUTTON.y + 8))
+        screen.blit(small.render("框选后：Ctrl+C 复制，再点击“开始粘贴”", True, (175, 196, 175)), (24, 635))
+        screen.blit(small.render("地面/当前/上层及碰撞会一起复制。", True, (175, 196, 175)), (24, 660))
         pygame.display.flip()
         clock.tick(60)
     if dirty:
