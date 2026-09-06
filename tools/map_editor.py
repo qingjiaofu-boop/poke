@@ -88,6 +88,7 @@ def main(name: str):
     tile_index = 1
     palette_page = 0
     mode = "paint"
+    preview_mode = False
     running = True
     dirty = False
     selection_start = None
@@ -170,6 +171,12 @@ def main(name: str):
 
     def draw_layer_preview():
         """Show the active layer clearly and fade the other two layers."""
+        if preview_mode:
+            # This is the same three-layer composition used by the game:
+            # lower -> current -> upper, without editor overlays.
+            for image in layers:
+                screen.blit(image, CANVAS)
+            return
         for i, image in enumerate(layers):
             if i == layer:
                 screen.blit(image, CANVAS)
@@ -210,8 +217,14 @@ def main(name: str):
                 elif event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
                     if clipboard_layers is not None:
                         mode = "paste"
+                elif event.key == pygame.K_4:
+                    preview_mode = not preview_mode
+                    mode = "preview" if preview_mode else "paint"
+                    selection_start = None
+                    selection_cells = None
                 elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
                     layer = event.key - pygame.K_1
+                    preview_mode = False
                     mode = "paint"
                 elif event.key == pygame.K_c:
                     mode = "collision" if mode != "collision" else "paint"
@@ -226,6 +239,8 @@ def main(name: str):
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button in (1, 3):
                     cell = cell_at(event.pos)
+                    if preview_mode:
+                        continue
                     if mode == "select" and cell is not None and event.button == 1:
                         selection_start = cell
                         selection_cells = pygame.Rect(cell[0], cell[1], 1, 1)
@@ -268,18 +283,19 @@ def main(name: str):
         screen.fill((35, 48, 43))
         # Map preview with active-layer focus.
         draw_layer_preview()
-        for x, y in blocked:
-            pygame.draw.rect(screen, (220, 80, 70), (CANVAS.x + x * TILE + 2, CANVAS.y + y * TILE + 2, TILE - 4, TILE - 4), 2)
-        sx, sy = start
-        pygame.draw.rect(screen, (250, 220, 80), (CANVAS.x + sx * TILE + 5, CANVAS.y + sy * TILE + 5, TILE - 10, TILE - 10), 2)
+        if not preview_mode:
+            for x, y in blocked:
+                pygame.draw.rect(screen, (220, 80, 70), (CANVAS.x + x * TILE + 2, CANVAS.y + y * TILE + 2, TILE - 4, TILE - 4), 2)
+            sx, sy = start
+            pygame.draw.rect(screen, (250, 220, 80), (CANVAS.x + sx * TILE + 5, CANVAS.y + sy * TILE + 5, TILE - 10, TILE - 10), 2)
         pygame.draw.rect(screen, (180, 210, 175), CANVAS, 2)
-        if selection_cells is not None:
+        if not preview_mode and selection_cells is not None:
             selection_rect = pygame.Rect(CANVAS.x + selection_cells.x * TILE,
                                          CANVAS.y + selection_cells.y * TILE,
                                          selection_cells.w * TILE,
                                          selection_cells.h * TILE)
             pygame.draw.rect(screen, (255, 238, 94), selection_rect, 3)
-        if mode == "paste" and paste_origin is not None and clipboard_layers is not None:
+        if not preview_mode and mode == "paste" and paste_origin is not None and clipboard_layers is not None:
             pw = clipboard_layers[0].get_width()
             ph = clipboard_layers[0].get_height()
             preview = pygame.Surface((pw, ph), pygame.SRCALPHA)
@@ -293,10 +309,10 @@ def main(name: str):
                              (CANVAS.x + px * TILE, CANVAS.y + py * TILE, pw, ph), 3)
 
         # Palette and controls.
-        layer_name = ('地面' if layer == 0 else '当前' if layer == 1 else '上层')
+        layer_name = '游戏预览' if preview_mode else ('地面' if layer == 0 else '当前' if layer == 1 else '上层')
         layer_color = ((92, 210, 255), (255, 190, 75), (205, 145, 255))[layer]
-        screen.blit(font.render(f"地图：{name}   当前层：{layer_name}", True, layer_color), (400, 28))
-        screen.blit(small.render("1/2/3 切层  M框选  Ctrl+C复制  Ctrl+V粘贴  S保存  Esc退出", True, (190, 210, 190)), (400, 50))
+        screen.blit(font.render(f"地图：{name}   当前层：{layer_name}", True, (242, 244, 218) if preview_mode else layer_color), (400, 28))
+        screen.blit(small.render("1/2/3 切层  4游戏预览  M框选  Ctrl+C复制  Ctrl+V粘贴  S保存  Esc退出", True, (190, 210, 190)), (400, 50))
         pygame.draw.rect(screen, (20, 30, 28), (8, 78, 368, 620), border_radius=8)
         screen.blit(font.render("Outside 图块（资源区）", True, (242, 244, 218)), (24, 88))
         palette = pygame.Rect(24, 110, 8 * 40, 4 * 40)
@@ -313,10 +329,14 @@ def main(name: str):
         screen.blit(small.render("C：碰撞标记模式（仅当前层）", True, (205, 220, 198)), (24, 326))
         screen.blit(small.render("P：设置出生点（点击地图格）", True, (205, 220, 198)), (24, 351))
         screen.blit(small.render("M：框选三层，Ctrl+C复制，Ctrl+V后点击地图粘贴", True, (205, 220, 198)), (24, 375))
+        screen.blit(small.render("4：查看游戏最终合成画面，再按 1/2/3 返回编辑", True, (205, 220, 198)), (24, 398))
         status = f"模式：{mode}" + (" *未保存" if dirty else "")
-        screen.blit(font.render(status, True, (238, 194, 117)), (24, 410))
-        screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 430))
-        screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 455))
+        screen.blit(font.render(status, True, (238, 194, 117)), (24, 435))
+        if preview_mode:
+            screen.blit(small.render("当前为游戏画面预览：三层已正常合成", True, (178, 222, 184)), (24, 460))
+        else:
+            screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 460))
+            screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
         screen.blit(small.render("建议：地面层铺草地/道路，当前层放花草水边，", True, (175, 196, 175)), (24, 490))
         screen.blit(small.render("上层放树冠；上层不会阻挡角色。", True, (175, 196, 175)), (24, 515))
         pygame.display.flip()
