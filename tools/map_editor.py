@@ -122,7 +122,7 @@ def main(name: str):
         return pygame.Rect(left, top, right - left + 1, bottom - top + 1)
 
     def copy_selection():
-        """Copy all three layers and current-layer collision cells."""
+        """Copy the same rectangular area from all three map layers."""
         nonlocal clipboard_layers, clipboard_blocked, mode
         if selection_cells is None:
             return
@@ -135,7 +135,7 @@ def main(name: str):
         mode = "paste_ready"
 
     def paste_at(origin):
-        """Paste the copied rectangle, keeping it inside the map."""
+        """Replace a destination rectangle with the copied three-layer area."""
         nonlocal dirty, mode, paste_origin
         if clipboard_layers is None:
             return
@@ -143,7 +143,12 @@ def main(name: str):
         height = clipboard_layers[0].get_height() // TILE
         x = max(0, min(MAP_W - width, origin[0]))
         y = max(0, min(MAP_H - height, origin[1]))
+        destination = pygame.Rect(x * TILE, y * TILE, width * TILE, height * TILE)
         for index, image in enumerate(clipboard_layers):
+            # Pygame blit does not overwrite transparent source pixels. Clear
+            # first so a copied transparent gap correctly removes any old
+            # flowers, trunks, or canopy tiles at the destination.
+            layers[index].fill((0, 0, 0, 0), destination)
             layers[index].blit(image, (x * TILE, y * TILE))
         # Remove collision cells in the destination rectangle before applying
         # copied cells, matching the way a pasted current-layer tree replaces
@@ -152,14 +157,16 @@ def main(name: str):
                                    if x <= bx < x + width and y <= by < y + height})
         blocked.update((x + bx, y + by) for bx, by in clipboard_blocked)
         paste_origin = (x, y)
-        mode = "paint"
+        # Keep paste mode active so one copied tree/building can be stamped
+        # repeatedly with successive clicks.
+        mode = "paste"
         dirty = True
 
     def save():
         nonlocal dirty
         OUT.mkdir(parents=True, exist_ok=True)
         for i, suffix in enumerate(("lower", "current", "upper")):
-            layers[i].save(OUT / f"{name}_{suffix}.png")
+            pygame.image.save(layers[i], str(OUT / f"{name}_{suffix}.png"))
         all_meta[name] = {
             "size": [MAP_W, MAP_H],
             "start": list(start),
@@ -328,7 +335,7 @@ def main(name: str):
         screen.blit(small.render(f"图块编号：{tile_index}   页面：{palette_page}（←/→翻页）", True, (205, 220, 198)), (24, 290))
         screen.blit(small.render("C：碰撞标记模式（仅当前层）", True, (205, 220, 198)), (24, 326))
         screen.blit(small.render("P：设置出生点（点击地图格）", True, (205, 220, 198)), (24, 351))
-        screen.blit(small.render("M：框选三层，Ctrl+C复制，Ctrl+V后点击地图粘贴", True, (205, 220, 198)), (24, 375))
+        screen.blit(small.render("M：框选三层，Ctrl+C复制，Ctrl+V后连续点击粘贴", True, (205, 220, 198)), (24, 375))
         screen.blit(small.render("4：查看游戏最终合成画面，再按 1/2/3 返回编辑", True, (205, 220, 198)), (24, 398))
         status = f"模式：{mode}" + (" *未保存" if dirty else "")
         screen.blit(font.render(status, True, (238, 194, 117)), (24, 435))
