@@ -42,6 +42,10 @@ python -c "from serial.tools import list_ports; print([(p.device, p.description)
 
 原 RPG Maker 工程保持不变，提取的资源副本位于 `assets` 目录。
 
+## STC-B 开发板固件
+
+开发板端 Keil/C51 工程已放在 `firmware/stc_bsp_gomoku`，包括 `main.c`、完整 BSP 头文件、`STCBSP_V3.6.LIB`、Keil 工程配置和可直接烧录的 HEX。开发板负责按键、震动、光照和温度采集，电脑端 `adventure.py` 负责游戏逻辑与画面，二者通过 9600 baud 串口协议连接。协议和烧录流程见 [firmware/README.md](firmware/README.md)。
+
 ## 三层地图编辑器（像 RPG Maker 一样搭图）
 
 编辑器左侧是 `Outside.png` 图块资源区，右侧是 24×18 地图画布。鼠标选中图块后点击画布即可绘制，支持地面层、当前层、上层，以及当前层碰撞标记和出生点设置：
