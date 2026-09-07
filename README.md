@@ -73,6 +73,20 @@ python adventure.py COM3
 - 训练战斗页：日光束、光合作用、重磅冲撞的数值随传感器变化
 - STC-B 协议兼容：方向/确认指令 `0x01-0x05`，重开 `0x06`，导航键 3 切页 `0x08`，震动 `0x09`，光照/温度数据帧 `0x40/0x41`
 
+## 数据驱动战斗框架
+
+基础战斗规则位于 [battle_engine.py](battle_engine.py)。资源包中的 898 条宝可梦图鉴记录和 741 条普通招式记录已转换到 `assets/data/pokemon.json`、`assets/data/moves.json`，可以直接用记事本编辑。图鉴记录包含六项种族值、属性和图鉴文本；招式记录包含属性、物理/特殊/变化分类、威力、命中率、PP 和说明。
+
+战斗默认使用 6V（六项 IV 均为 31）、0 EV、无性格。伤害保留等级、攻击/防御、威力、随机数（217-255）、STAB、属性倍率、命中判定和暴击判定；不加入特性、道具和异常状态。主角的传感器招式单独位于 [protagonist_moves.py](protagonist_moves.py)，实时读取光照、温度和震动后才生成可执行的 `Move`，不放进 JSON。
+
+重新从课程资源生成静态数据：
+
+```powershell
+python tools\build_battle_data.py
+```
+
+公式和调用示例见 [assets/data/README.md](assets/data/README.md)。
+
 原 RPG Maker 工程保持不变，提取的资源副本位于 `assets` 目录。
 
 ## STC-B 开发板固件
