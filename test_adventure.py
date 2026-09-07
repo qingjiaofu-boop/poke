@@ -37,6 +37,8 @@ def test_story_path():
         game.move_cursor = 1
         game.command(5)
         assert game.battle_won
+        for _ in range(32):
+            game.update_battle_effect()
         game.command(5)
         assert game.scene == "route"
 
@@ -108,6 +110,41 @@ def test_npc_collision_and_step_events():
         assert game.dialogue_source == "step"
         assert game.dialogue
         assert ("route", (11, 14)) in game.triggered_step_events
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
+def test_battle_assets_and_sensor_moves():
+    game = Adventure(None)
+    try:
+        game.map_view = None
+        game.start_battle()
+        assert game.scene == "battle"
+        assert game.enemy_battle is not None
+        assert game.battle_ui["fight"] is not None
+        assert all(game.battle_effect_frames[name]
+                   for name in ("synthesis", "solar", "heavy", "weather"))
+
+        game.light = 0
+        game.use_move(1)
+        low_light_damage = 100 - game.enemy_hp
+        assert low_light_damage == 22
+        assert game.battle_effect and game.battle_effect["name"] == "solar"
+        for _ in range(32):
+            game.update_battle_effect()
+        assert game.battle_effect is None
+
+        game.enemy_hp = 100
+        game.light = 1023
+        game.use_move(1)
+        assert 100 - game.enemy_hp == 68
+        game.heavy_ready = True
+        game.vibration_count = 3
+        game.use_move(2)
+        assert not game.heavy_ready
+        assert game.battle_effect["name"] == "heavy"
+        game.draw_battle()
     finally:
         game.serial.close()
         pygame.quit()
@@ -317,6 +354,7 @@ if __name__ == "__main__":
     test_story_path()
     test_tile_map_loading_and_view_switching()
     test_npc_collision_and_step_events()
+    test_battle_assets_and_sensor_moves()
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
     test_bidirectional_warps()

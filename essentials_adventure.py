@@ -195,6 +195,10 @@ class Game:
         self.player_hp, self.enemy_hp = 100, 100
         self.move_cursor = 0
         self.heavy_ready = False
+        self.battle_lost = False
+        self.battle_effect = None
+        self.battle_notice = ""
+        self.battle_notice_until = 0.0
         self.map_view: str | None = None
         self.map_view_pos = [0, 0]
         self.step = None
@@ -274,7 +278,31 @@ class Game:
             self.player = pygame.transform.scale(self.player, (TILE_SIZE, TILE_SIZE))
         battle_player = self._load("resource/battle/pokemon/back/ferrothorn.png") or self.player
         self.ferro_battle = pygame.transform.scale(battle_player, (96, 96)) if battle_player else None
+        battle_enemy = self._load("resource/battle/pokemon/front/ferroseed.png") or self.friend
+        self.enemy_battle = pygame.transform.scale(battle_enemy, (84, 84)) if battle_enemy else None
         self.battle_background = self._load("resource/battle/backgrounds/cave1_bg.png")
+        self.battle_bases = {
+            "player": self._load("resource/battle/backgrounds/cave1_player_base.png"),
+            "foe": self._load("resource/battle/backgrounds/cave1_foe_base.png"),
+        }
+        self.battle_ui = {
+            "player_box": self._load("resource/battle/ui/databox_normal.png"),
+            "foe_box": self._load("resource/battle/ui/databox_normal_foe.png"),
+            "fight": self._load("resource/battle/ui/overlay_fight.png"),
+            "message": self._load("resource/battle/ui/overlay_message.png"),
+        }
+        self.battle_effect_frames = {
+            "synthesis": self._load_battle_effect_frames("synthesis_heal.png"),
+            "solar": self._load_battle_effect_frames("solar_beam_core.png"),
+            "heavy": self._load_battle_effect_frames("heavy_slam.png"),
+            "weather": self._load_battle_effect_frames("weather_ball.png"),
+        }
+        self.battle_sounds = {
+            "synthesis": self._load_battle_sound("synthesis_heal.ogg"),
+            "solar": self._load_battle_sound("impact.ogg"),
+            "heavy": self._load_battle_sound("heavy_slam.ogg"),
+            "weather": self._load_battle_sound("weather_ball.ogg"),
+        }
         if self.jirachi:
             self.jirachi = pygame.transform.scale(self.jirachi, (72, 72))
         if self.friend:
@@ -509,6 +537,39 @@ class Game:
         card.blit(scaled, scaled.get_rect(midbottom=(size[0] // 2, size[1])))
         return card
 
+    def _load_battle_effect_frames(self, name):
+        """Load the first animation row from an Essentials effect sheet.
+
+        The supplied effects use 192px cells.  The first row contains a
+        compact, complete animation for each of the four classroom moves,
+        which is enough for this small turn-based prototype without importing
+        RPG Maker's animation runtime.
+        """
+        sheet = self._load(f"resource/battle/effects/{name}")
+        if sheet is None:
+            return []
+        cell = 192
+        count = sheet.get_width() // cell
+        if count == 0 or sheet.get_height() < cell:
+            return []
+        frames = []
+        for column in range(count):
+            frame = sheet.subsurface((column * cell, 0, cell, cell)).copy()
+            if frame.get_bounding_rect().width:
+                frames.append(frame)
+        return frames
+
+    @staticmethod
+    def _load_battle_sound(name):
+        """Return an optional move sound; the game remains playable silently."""
+        path = ASSETS / "resource" / "audio" / "se" / "moves" / name
+        if not path.exists() or not pygame.mixer.get_init():
+            return None
+        try:
+            return pygame.mixer.Sound(str(path))
+        except pygame.error:
+            return None
+
     @staticmethod
     def _load_story_events():
         """Load editable event dialogue, retaining a built-in fallback."""
@@ -582,6 +643,7 @@ class Game:
             self.update_movement()
             self.update_field_attack()
             self.update_warp_fade()
+            self.update_battle_effect()
             self.draw()
         self.serial.close()
         pygame.quit()
@@ -944,9 +1006,13 @@ class Game:
         self.player_hp, self.enemy_hp = 100, 100
         self.move_cursor = 0
         self.heavy_ready = False
-        self.show_toast("训练战斗开始！", 2)
+        self.battle_lost = False
+        self.battle_effect = None
+        self.set_battle_notice("青梅派出了种子铁球！", 2.4)
 
     def battle_command(self, command):
+        if self.battle_effect:
+            return
         if self.battle_won:
             if command == 5:
                 self.step = None
@@ -954,6 +1020,10 @@ class Game:
                 self.pos[:] = self.scene_start("route")
                 self.meteor_phase = 1
                 self.show_toast("训练结束。青梅：流星坠向北方的山洞！", 3)
+            return
+        if self.battle_lost:
+            if command == 5:
+                self.start_battle()
             return
         if command in (3, 4):
             self.move_cursor = (self.move_cursor + (1 if command == 4 else -1)) % 4
@@ -963,36 +1033,59 @@ class Game:
             self.use_move(self.move_cursor)
 
     def use_move(self, move):
-        light_power = 0.5 + (self.light or 512) / 1023.0
+        light_value = 512 if self.light is None else self.light
+        light_power = 0.5 + light_value / 1023.0
         if move == 0:
             heal = round(18 * light_power)
             self.player_hp = min(100, self.player_hp + heal)
-            self.show_toast(f"光合作用恢复了 {heal} 点体力。", 2)
+            self.begin_battle_effect("synthesis", f"坚果哑铃使用了光合作用！恢复 {heal} 点体力。")
         elif move == 1:
             damage = round(45 * light_power)
             self.enemy_hp = max(0, self.enemy_hp - damage)
-            self.show_toast(f"日光束造成 {damage} 点伤害。", 2)
+            self.begin_battle_effect("solar", f"坚果哑铃使用了日光束！造成 {damage} 点伤害。")
         elif move == 2:
             if not self.heavy_ready:
-                self.show_toast("重磅冲撞需要先由震动传感器触发。", 2)
+                self.set_battle_notice("重磅冲撞需要先由震动传感器触发。", 2)
                 return
             damage = 28 + min(35, self.vibration_count * 4)
             self.enemy_hp = max(0, self.enemy_hp - damage)
             self.heavy_ready = False
-            self.show_toast(f"重磅冲撞造成 {damage} 点伤害！", 2)
+            self.begin_battle_effect("heavy", f"坚果哑铃使出重磅冲撞！造成 {damage} 点伤害！")
         else:
             temp = self.temperature if self.temperature is not None else 20
             kind = "火" if temp > 30 else ("冰" if temp < 10 else "一般")
             damage = 38 if temp > 30 or temp < 10 else 25
             self.enemy_hp = max(0, self.enemy_hp - damage)
-            self.show_toast(f"气象球（{kind}）造成 {damage} 点伤害。", 2)
+            self.begin_battle_effect("weather", f"气象球变为{kind}属性！造成 {damage} 点伤害。")
         if self.enemy_hp <= 0:
             self.battle_won = True
-            self.show_toast("战斗胜利！按 Enter 前往 1 号道路。", 3)
+            self.set_battle_notice("种子铁球倒下了！战斗胜利，按 Enter 前往 1 号道路。", 4)
             return
         self.player_hp = max(0, self.player_hp - 8)
         if self.player_hp <= 0:
-            self.show_toast("体力耗尽，按 R 重新开始。", 3)
+            self.battle_lost = True
+            self.set_battle_notice("坚果哑铃失去战斗能力。按 Enter 再次挑战。", 4)
+
+    def set_battle_notice(self, text, seconds=2.0):
+        self.battle_notice = text
+        self.battle_notice_until = time.monotonic() + seconds
+
+    def begin_battle_effect(self, effect, message):
+        sound = self.battle_sounds.get(effect)
+        if sound:
+            sound.play()
+        self.battle_effect = {"name": effect, "frame": 0, "message": message}
+        self.set_battle_notice(message, 2.2)
+
+    def update_battle_effect(self):
+        if not self.battle_effect:
+            return
+        self.battle_effect["frame"] += 1
+        frames = self.battle_effect_frames.get(self.battle_effect["name"], [])
+        # A two-frame hold keeps pixel effects readable at 60 FPS.
+        duration = max(16, len(frames) * 2)
+        if self.battle_effect["frame"] >= duration:
+            self.battle_effect = None
 
     def vibration(self):
         if self.scene == "cave3" and self.adjacent(self.pos, self.ROCK_POS) and not self.rock_broken:
@@ -1025,6 +1118,8 @@ class Game:
         self.facing = "down"
         self.scene, self.pos = "home", self.scene_start("home")
         self.father_done = self.friend_met = self.battle_won = False
+        self.battle_lost = False
+        self.battle_effect = None
         self.rock_broken = False
         self.dialogue = []
         self.dialogue_index = 0
@@ -1228,27 +1323,95 @@ class Game:
 
     def draw_battle(self):
         if self.battle_background:
-            self.blit_cover(self.battle_background, pygame.Rect(0, 0, WIDTH, 205))
+            self.blit_cover(self.battle_background, pygame.Rect(0, 0, WIDTH, 230))
         else:
             self.screen.fill((43, 72, 65))
-        pygame.draw.ellipse(self.screen, (73, 112, 84), (25, 155, 205, 42))
-        pygame.draw.ellipse(self.screen, (73, 112, 84), (282, 74, 175, 35))
+
+        self.draw_battle_base("player", pygame.Rect(6, 174, 245, 31))
+        self.draw_battle_base("foe", pygame.Rect(300, 83, 145, 72))
         if self.ferro_battle:
-            self.screen.blit(self.ferro_battle, self.ferro_battle.get_rect(center=(120, 145)))
-        if self.jirachi:
-            self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(370, 62)))
-        self.draw_hp((16, 16), "坚果哑铃", self.player_hp)
-        self.draw_hp((305, 115), "训练对手", self.enemy_hp)
-        self.screen.blit(self.title.render("训练战斗", True, (248, 243, 204)), (196, 6))
+            self.screen.blit(self.ferro_battle, self.ferro_battle.get_rect(center=(122, 160)))
+        if self.enemy_battle:
+            self.screen.blit(self.enemy_battle, self.enemy_battle.get_rect(center=(370, 94)))
+        self.draw_battle_databox("player", pygame.Rect(260, 156, 212, 65), "坚果哑铃", self.player_hp, 20)
+        self.draw_battle_databox("foe", pygame.Rect(8, 7, 204, 48), "青梅的种子铁球", self.enemy_hp, 12)
+        self.draw_battle_effect()
+        self.draw_battle_menu()
+
+    def draw_battle_base(self, side, target):
+        image = self.battle_bases.get(side)
+        if image:
+            self.screen.blit(pygame.transform.scale(image, target.size), target)
+        else:
+            pygame.draw.ellipse(self.screen, (73, 112, 84), target)
+
+    def draw_battle_databox(self, side, target, name, hp, level):
+        image = self.battle_ui.get(f"{side}_box")
+        if image:
+            self.screen.blit(pygame.transform.scale(image, target.size), target)
+        else:
+            pygame.draw.rect(self.screen, (221, 222, 211), target)
+        name_font = self.small if side == "foe" else self.font
+        self.screen.blit(name_font.render(name, True, (27, 35, 32)), (target.x + 15, target.y + 8))
+        level_text = self.small.render(f"Lv.{level}", True, (27, 35, 32))
+        self.screen.blit(level_text, (target.right - level_text.get_width() - 10, target.y + 8))
+        bar = pygame.Rect(target.x + round(target.width * 0.43), target.y + round(target.height * 0.49),
+                          round(target.width * 0.47), 6)
+        pygame.draw.rect(self.screen, (40, 48, 45), bar)
+        hp_color = (84, 174, 75) if hp > 50 else ((218, 177, 53) if hp > 20 else (201, 70, 61))
+        pygame.draw.rect(self.screen, hp_color, (bar.x + 1, bar.y + 1,
+                                                  max(1, round((bar.width - 2) * hp / 100)),
+                                                  max(1, bar.height - 2)))
+        if side == "player":
+            hp_text = self.small.render(f"{hp}/100", True, (27, 35, 32))
+            self.screen.blit(hp_text, (target.right - hp_text.get_width() - 11, target.bottom - 15))
+
+    def draw_battle_effect(self):
+        effect = self.battle_effect
+        if not effect:
+            return
+        frames = self.battle_effect_frames.get(effect["name"], [])
+        if not frames:
+            return
+        frame = frames[min(len(frames) - 1, effect["frame"] // 2)]
+        target = (122, 153) if effect["name"] == "synthesis" else (370, 94)
+        effect_image = pygame.transform.scale(frame, (112, 112))
+        self.screen.blit(effect_image, effect_image.get_rect(center=target))
+
+    def draw_battle_menu(self):
+        message_active = self.battle_effect or time.monotonic() < self.battle_notice_until
+        if message_active:
+            overlay = self.battle_ui.get("message")
+            if overlay:
+                self.screen.blit(pygame.transform.scale(overlay, (WIDTH, 90)), (0, 230))
+            else:
+                pygame.draw.rect(self.screen, (42, 44, 60), (0, 230, WIDTH, 90))
+            message = self.battle_effect["message"] if self.battle_effect else self.battle_notice
+            self.draw_multiline(18, 246, message, self.font, (38, 45, 54), WIDTH - 36)
+            hint = "动画播放中..." if self.battle_effect else "Enter 确认"
+            rendered = self.small.render(hint, True, (82, 76, 64))
+            self.screen.blit(rendered, (WIDTH - rendered.get_width() - 16, 297))
+            return
+
+        overlay = self.battle_ui.get("fight")
+        if overlay:
+            self.screen.blit(pygame.transform.scale(overlay, (WIDTH, 90)), (0, 230))
+        else:
+            pygame.draw.rect(self.screen, (40, 50, 53), (0, 230, WIDTH, 90))
         labels = ["光合作用", "日光束", "重磅冲撞", "气象球"]
-        pygame.draw.rect(self.screen, (22, 38, 36), (6, 210, 468, 104), border_radius=5)
         for i, label in enumerate(labels):
             col, row = i % 2, i // 2
-            box = pygame.Rect(14 + col * 231, 218 + row * 45, 221, 38)
-            color = (187, 153, 75) if i == self.move_cursor else (73, 105, 88)
-            pygame.draw.rect(self.screen, color, box, border_radius=3)
+            box = pygame.Rect(20 + col * 180, 241 + row * 36, 165, 28)
+            color = (248, 241, 190) if i == self.move_cursor else (41, 46, 57)
             suffix = " *" if i == 2 and self.heavy_ready else ""
-            self.screen.blit(self.font.render(label + suffix, True, (245, 244, 213)), (box.x + 10, box.y + 10))
+            self.screen.blit(self.font.render(label + suffix, True, color), (box.x + 8, box.y + 5))
+            if i == self.move_cursor:
+                pygame.draw.polygon(self.screen, (246, 189, 52),
+                                    ((box.x - 11, box.centery), (box.x - 3, box.centery - 5),
+                                     (box.x - 3, box.centery + 5)))
+        if self.heavy_ready:
+            ready = self.small.render("震动已检测：重磅冲撞可用", True, (252, 232, 134))
+            self.screen.blit(ready, (WIDTH - ready.get_width() - 12, 272))
 
     def blit_cover(self, image, target):
         """Scale a map or battle background without changing its aspect ratio."""

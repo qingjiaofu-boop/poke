@@ -7,7 +7,7 @@
 推荐在 Windows 上使用 Python 3.12（Python 3.10-3.13 均可）。首次运行时，在 PowerShell 中依次执行：
 
 ```powershell
-git clone https://github.com/yee810/poke.git
+git clone https://github.com/qingjiaofu-boop/poke.git
 cd poke
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -124,6 +124,17 @@ python test_adventure.py
 4. 战斗胜利后按 Enter 进入 1 号道路，继续向上经过三段矿洞。
 5. 在深处岩石旁晃动开发板；没有开发板时按 `V`。通道打开后继续向上，与基拉祈完成结局。
 
+### 训练战斗操作
+
+青梅事件结束后会进入一场与种子铁球的训练战。`↑/↓/←/→`（或开发板导航键）选择四个技能，`Enter`（或开发板中心键）确认。攻击动画结束后可继续选择；胜利时按 `Enter` 前往 1 号道路，失败时按 `Enter` 重新挑战。
+
+| 技能 | 开发板联动 | 效果 |
+| --- | --- | --- |
+| 光合作用 | 光敏传感器 | 光照越强，回复越多体力。 |
+| 日光束 | 光敏传感器 | 光照越强，伤害越高。 |
+| 重磅冲撞 | 震动传感器 | 先晃动学习板使技能进入可用状态；震动次数会提升伤害。 |
+| 气象球 | 温度传感器 | 温度大于 30C 为火属性，小于 10C 为冰属性，否则为一般属性。 |
+
 ## 剧情事件编辑器
 
 对白存放在 `assets/story_events.json`，程序启动时自动读取；每条记录包含
@@ -178,10 +189,10 @@ python tools/event_editor.py
 
 | 资源 | 位置 | 当前用途 |
 | --- | --- | --- |
-| 对战背景、平台、消息框 | `assets/resource/battle/backgrounds/` | 已用于训练战斗背景 |
-| 坚果哑铃及野生宝可梦正背面 | `assets/resource/battle/pokemon/front/`、`back/` | 坚果哑铃已用于训练战斗；可替换敌方立绘 |
-| 技能特效 | `assets/resource/battle/effects/` | 可接入日光束、光合作用、重磅冲撞、气象球动画 |
-| 宝可梦对战 UI | `assets/resource/battle/ui/` | 可替换当前简化 HP 与技能菜单 |
-| 音效、招式音效与 BGM | `assets/resource/audio/` | 可在攻击、胜利、菜单操作时播放 |
+| 对战背景、平台、消息框 | `assets/resource/battle/backgrounds/` | 已用于训练战斗背景和双方平台 |
+| 坚果哑铃及野生宝可梦正背面 | `assets/resource/battle/pokemon/front/`、`back/` | 坚果哑铃背面和种子铁球正面已用于训练战斗 |
+| 技能特效 | `assets/resource/battle/effects/` | 光合作用、日光束、重磅冲撞、气象球均已接入短动画 |
+| 宝可梦对战 UI | `assets/resource/battle/ui/` | 已接入双方状态框、消息框和四格技能菜单 |
+| 音效、招式音效与 BGM | `assets/resource/audio/` | 四种招式已接入可用时自动播放的音效 |
 
-目前训练战斗已经具备回合制选招、HP、胜负和传感器数值联动。下一阶段建议优先把 `battle/ui` 的状态框和 `battle/effects` 的四个专属招式特效接入现有 `draw_battle` / `use_move`，而不是重写战斗逻辑。
+目前训练战斗已经具备回合制选招、HP、胜负、原始 Essentials 风格战斗 UI、四种技能特效/音效和传感器数值联动。下一阶段可以添加敌方招式、属性克制与更多野生宝可梦遭遇，而不必重写现有战斗逻辑。
