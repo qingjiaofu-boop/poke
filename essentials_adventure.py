@@ -183,6 +183,11 @@ class Game:
         self.battle_won = False
         self.dialogue: list[str] = []
         self.dialogue_index = 0
+        # Dialogue presentation state.  The text format stays
+        # ``Speaker: message`` so existing events and tests remain compatible,
+        # while the renderer can select a matching large portrait.
+        self.dialogue_portraits = {}
+        self.dialogue_reveal = 0
         self.toast = ""
         self.toast_until = 0.0
         self.meteor_phase = 0
@@ -197,6 +202,7 @@ class Game:
         self.fade_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.facing = "down"
         self._load_assets()
+        self.story_events = self._load_story_events()
         self.pos[:] = self.scene_start("home")
         world = self.tile_maps.get("world")
         if world:
@@ -249,6 +255,8 @@ class Game:
         self.player = down_frames[1] if len(down_frames) > 1 else None
         self.player = self.player or self._load("resource/map/characters/ferrothorn_user.png") or self._load("FERROTHORN_USER.png")
         self.friend = self._load("introMarill.png")
+        self.father_portrait = self._load("introOak.png")
+        self.player_portrait = self._load("FERROTHORN_USER.png")
         self.jirachi = self._load("JIRACHI.png")
         if self.player:
             if not self.player_frames and self.player.get_width() >= 32 and self.player.get_height() >= 32:
@@ -261,6 +269,15 @@ class Game:
             self.jirachi = pygame.transform.scale(self.jirachi, (72, 72))
         if self.friend:
             self.friend = pygame.transform.scale(self.friend, (32, 32))
+        # Portraits use nearest-neighbour scaling to preserve the pixel-art
+        # appearance.  They are intentionally cached once at startup.
+        self.dialogue_portraits = {
+            "父亲": self._portrait(self.father_portrait, (150, 190)),
+            "大木博士": self._portrait(self.father_portrait, (150, 190)),
+            "青梅": self._portrait(self.friend, (150, 150)),
+            "坚果哑铃": self._portrait(self.player_portrait, (150, 150)),
+            "基拉祈": self._portrait(self.jirachi, (150, 150)),
+        }
         music = ASSETS / "Title.ogg"
         if music.exists():
             try:
@@ -447,6 +464,55 @@ class Game:
             except (pygame.error, FileNotFoundError):
                 continue
         return None
+
+    @staticmethod
+    def _portrait(image, size):
+        """Scale a portrait to fit a dialogue card without stretching it."""
+        if image is None:
+            return None
+        iw, ih = image.get_size()
+        scale = min(size[0] / max(1, iw), size[1] / max(1, ih))
+        scaled = pygame.transform.scale(
+            image, (max(1, round(iw * scale)), max(1, round(ih * scale)))
+        )
+        card = pygame.Surface(size, pygame.SRCALPHA)
+        card.blit(scaled, scaled.get_rect(midbottom=(size[0] // 2, size[1])))
+        return card
+
+    @staticmethod
+    def _load_story_events():
+        """Load editable event dialogue, retaining a built-in fallback."""
+        defaults = {
+            "father": [
+                "父亲：坚果哑铃，刚才的流星你也看见了吧？",
+                "父亲：去左边的森林空地找你的青梅竹马。",
+                "父亲：她也许知道流星落在哪里。",
+            ],
+            "friend": [
+                "青梅：你也在追那颗流星？我们先练习一下招式吧。",
+                "青梅：光照越强，日光束越强；光合作用也能恢复更多体力。",
+                "青梅：温度还会改变气象球的属性。准备好就出发！",
+            ],
+        }
+        path = ASSETS / "story_events.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            for key in defaults:
+                entries = raw.get(key)
+                if isinstance(entries, list) and entries:
+                    parsed = []
+                    for item in entries:
+                        if isinstance(item, str) and item.strip():
+                            parsed.append(item.strip())
+                        elif isinstance(item, dict) and item.get("text"):
+                            speaker = str(item.get("speaker", "")).strip()
+                            text = str(item["text"]).strip()
+                            parsed.append(f"{speaker}：{text}" if speaker else text)
+                    if parsed:
+                        defaults[key] = parsed
+        except (OSError, ValueError, TypeError):
+            pass
+        return defaults
 
     def run(self):
         while self.running:
@@ -757,11 +823,11 @@ class Game:
             self.show_toast(f"请靠近{target}后按中心键。", 1.8)
             return
         if self.scene == "home" and not self.father_done:
-            self.dialogue = ["父亲：坚果哑铃，刚才的流星你也看见了吧？", "父亲：去左边的森林空地找你的青梅竹马。", "父亲：她也许知道流星落在哪里。"]
+            self.dialogue = list(self.story_events["father"])
             self.dialogue_index = 0
             self.father_done = True
         elif self.scene == "friend" and not self.friend_met:
-            self.dialogue = ["青梅：你也在追那颗流星？我们先练习一下招式吧。", "青梅：光照越强，日光束越强；光合作用也能恢复更多体力。", "青梅：温度还会改变气象球的属性。准备好就出发！"]
+            self.dialogue = list(self.story_events["friend"])
             self.dialogue_index = 0
             self.friend_met = True
         elif self.scene == "friend" and self.friend_met and not self.battle_won:
@@ -1153,10 +1219,34 @@ class Game:
         self.screen.blit(rendered, (box.x + 5, box.y + 5))
 
     def draw_dialogue(self, text):
-        box = pygame.Rect(10, 242, WIDTH - 20, 68)
-        pygame.draw.rect(self.screen, (16, 27, 26), box, border_radius=4)
-        pygame.draw.rect(self.screen, (169, 190, 126), box, 1, border_radius=4)
-        self.draw_multiline(20, 252, text, self.font, (242, 245, 220), box.width - 20)
+        # Hades-inspired layout: a large speaker card occupies the left half
+        # of the lower screen, with a readable text panel beside it.  It also
+        # works for scenes without a portrait by simply omitting the card art.
+        speaker, message = self._split_dialogue(text)
+        portrait = self.dialogue_portraits.get(speaker)
+        panel = pygame.Rect(156 if portrait else 10, 224, WIDTH - (166 if portrait else 20), 86)
+        if portrait:
+            card = pygame.Rect(8, 128, 142, 182)
+            pygame.draw.rect(self.screen, (12, 22, 23), card, border_radius=5)
+            pygame.draw.rect(self.screen, (169, 190, 126), card, 2, border_radius=5)
+            self.screen.blit(portrait, portrait.get_rect(midbottom=(card.centerx, card.bottom - 7)))
+            name_box = pygame.Rect(card.x + 8, card.y + 8, card.width - 16, 23)
+            pygame.draw.rect(self.screen, (20, 37, 35), name_box, border_radius=3)
+            self.screen.blit(self.font.render(speaker, True, (250, 239, 180)), (name_box.x + 7, name_box.y + 3))
+        pygame.draw.rect(self.screen, (16, 27, 26), panel, border_radius=5)
+        pygame.draw.rect(self.screen, (169, 190, 126), panel, 2, border_radius=5)
+        self.draw_multiline(panel.x + 12, panel.y + 14, message, self.font,
+                            (242, 245, 220), panel.width - 24)
+        hint = self.small.render("Enter / 开发板中心键 继续", True, (180, 205, 177))
+        self.screen.blit(hint, (panel.right - hint.get_width() - 10, panel.bottom - hint.get_height() - 7))
+
+    @staticmethod
+    def _split_dialogue(text):
+        separator = "：" if "：" in text else (":" if ":" in text else None)
+        if separator:
+            speaker, message = text.split(separator, 1)
+            return speaker.strip(), message.strip()
+        return "", text
 
     def draw_toast(self, text):
         box = pygame.Rect(10, 284, min(WIDTH - 20, 22 + self.small.size(text)[0]), 26)
