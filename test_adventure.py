@@ -20,12 +20,14 @@ def test_story_path():
     try:
         game.map_view = None
         game.pos[:] = [1, 2]
+        game.facing = "up"
         game.command(5)
         assert game.father_done and game.dialogue
         advance_dialogue(game)
 
         game.scene = "friend"
         game.pos[:] = [2, 6]
+        game.facing = "up"
         game.command(5)
         assert game.friend_met and game.dialogue
         advance_dialogue(game)
@@ -79,6 +81,33 @@ def test_tile_map_loading_and_view_switching():
             game.switch_map_view(index)
             assert game.map_view == name
             assert game.map_view_pos == list(game.tile_maps[name].start)
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
+def test_npc_collision_and_step_events():
+    game = Adventure(None)
+    try:
+        game.map_view = None
+        father = tuple(game.NPC_POS["home"])
+        game.pos[:] = [father[0], father[1] + 1]
+        game.facing = "up"
+        game.move(1)
+        assert game.step is None
+        assert tuple(game.pos) != father
+        game.command(5)
+        assert game.father_done and game.dialogue
+
+        game.dialogue = []
+        game.scene = "route"
+        game.pos[:] = [11, 15]
+        game.move(1)
+        for _ in range(4):
+            game.update_movement()
+        assert game.dialogue_source == "step"
+        assert game.dialogue
+        assert ("route", (11, 14)) in game.triggered_step_events
     finally:
         game.serial.close()
         pygame.quit()
@@ -287,6 +316,7 @@ def test_bidirectional_warps():
 if __name__ == "__main__":
     test_story_path()
     test_tile_map_loading_and_view_switching()
+    test_npc_collision_and_step_events()
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
     test_bidirectional_warps()

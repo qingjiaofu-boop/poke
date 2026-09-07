@@ -183,6 +183,7 @@ class Game:
         self.battle_won = False
         self.dialogue: list[str] = []
         self.dialogue_index = 0
+        self.dialogue_source = None
         # Dialogue presentation state.  The text format stays
         # ``Speaker: message`` so existing events and tests remain compatible,
         # while the renderer can select a matching large portrait.
@@ -203,6 +204,8 @@ class Game:
         self.facing = "down"
         self._load_assets()
         self.story_events = self._load_story_events()
+        self.step_events = self._load_step_events()
+        self.triggered_step_events: set[tuple[str, str]] = set()
         self.pos[:] = self.scene_start("home")
         world = self.tile_maps.get("world")
         if world:
@@ -255,7 +258,14 @@ class Game:
         self.player = down_frames[1] if len(down_frames) > 1 else None
         self.player = self.player or self._load("resource/map/characters/ferrothorn_user.png") or self._load("FERROTHORN_USER.png")
         self.friend = self._load("introMarill.png")
-        self.father_portrait = self._load("introOak.png")
+        # The father is a different Ferrothorn model from the player's
+        # FERROTHORN_USER sprite.  STC.png is a four-direction, four-frame
+        # character sheet; the battle front sprite is used for his portrait.
+        self.father_frames = self._load_character_sheet("FERROTHORN_STC.png")
+        self.father_portrait = (
+            self._load("resource/battle/pokemon/front/ferrothorn.png")
+            or self._load("FERROTHORN_STC.png")
+        )
         self.player_portrait = self._load("FERROTHORN_USER.png")
         self.jirachi = self._load("JIRACHI.png")
         if self.player:
@@ -400,6 +410,26 @@ class Game:
                            for frame in frames["left"]]
         return frames
 
+    def _load_character_sheet(self, name):
+        """Load a 4-column, 4-row 32px character sheet.
+
+        The sheet is intentionally separate from the player's animation so an
+        NPC can have its own collision tile and facing direction.
+        """
+        sheet = self._load(name)
+        if sheet is None or sheet.get_width() < TILE_SIZE * 4 or sheet.get_height() < TILE_SIZE * 3:
+            return {}
+        rows = {"down": 0, "left": 1, "up": 2}
+        frames = {
+            direction: [
+                sheet.subsurface((column * TILE_SIZE, row * TILE_SIZE, TILE_SIZE, TILE_SIZE)).copy()
+                for column in range(4)
+            ]
+            for direction, row in rows.items()
+        }
+        frames["right"] = [pygame.transform.flip(frame, True, False) for frame in frames["left"]]
+        return frames
+
     def _load_attack_frames(self):
         path = ASSETS / "movements.png"
         if not path.exists():
@@ -513,6 +543,36 @@ class Game:
         except (OSError, ValueError, TypeError):
             pass
         return defaults
+
+    @staticmethod
+    def _load_step_events():
+        """Read optional tile-triggered events from assets/step_events.json."""
+        path = ASSETS / "step_events.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return {}
+        events = {}
+        for scene, entries in raw.items() if isinstance(raw, dict) else ():
+            if not isinstance(entries, dict):
+                continue
+            for coordinate, value in entries.items():
+                try:
+                    x, y = (int(part.strip()) for part in str(coordinate).split(",", 1))
+                except (TypeError, ValueError):
+                    continue
+                lines = value if isinstance(value, list) else [value]
+                parsed = []
+                for item in lines:
+                    if isinstance(item, str) and item.strip():
+                        parsed.append(item.strip())
+                    elif isinstance(item, dict) and item.get("text"):
+                        speaker = str(item.get("speaker", "")).strip()
+                        text = str(item["text"]).strip()
+                        parsed.append(f"{speaker}：{text}" if speaker else text)
+                if parsed:
+                    events[(str(scene), (x, y))] = parsed
+        return events
 
     def run(self):
         while self.running:
@@ -638,6 +698,10 @@ class Game:
             return
         if self.scene == "cave3" and not self.rock_broken and [nx, ny] == self.ROCK_POS:
             self.show_toast("岩石挡住了去路。请靠近后晃动 STC-B。", 2.5)
+            return
+        if self.is_npc_tile(self.scene, (nx, ny)):
+            target = "父亲" if self.scene == "home" else "青梅"
+            self.show_toast(f"{target}挡住了去路。贴近后面对他按 Enter。", 1.8)
             return
         if tile_map and (nx, ny) in tile_map.blocked:
             self.show_toast("这里有花丛或装饰物，换个方向试试。", 1.0)
@@ -780,6 +844,30 @@ class Game:
             self.step["position"][:] = self.step["to"]
             self.step = None
             self.trigger_warp()
+            self.trigger_step_event()
+
+    def is_npc_tile(self, scene, point):
+        """NPCs occupy a solid tile in normal scenes, like RPG Maker events."""
+        return scene in self.NPC_POS and tuple(point) == tuple(self.NPC_POS[scene])
+
+    def is_facing_point(self, point):
+        dx = point[0] - self.pos[0]
+        dy = point[1] - self.pos[1]
+        return ((self.facing == "up" and (dx, dy) == (0, -1)) or
+                (self.facing == "down" and (dx, dy) == (0, 1)) or
+                (self.facing == "left" and (dx, dy) == (-1, 0)) or
+                (self.facing == "right" and (dx, dy) == (1, 0)))
+
+    def trigger_step_event(self):
+        """Fire a one-shot event after the player finishes entering a tile."""
+        key = (self.scene, tuple(self.pos))
+        lines = self.step_events.get(key)
+        if not lines or key in self.triggered_step_events or self.scene == "battle":
+            return
+        self.triggered_step_events.add(key)
+        self.dialogue = list(lines)
+        self.dialogue_index = 0
+        self.dialogue_source = "step"
 
     def actor_grid_position(self, position):
         if not self.step or self.step["context"] != self._movement_context():
@@ -818,17 +906,21 @@ class Game:
                 self.show_toast("矿洞最深处，岩石封住了最后的通道。", 3)
 
     def interact(self):
-        if self.scene in self.NPC_POS and not self.adjacent(self.pos, self.NPC_POS[self.scene]):
+        if self.scene in self.NPC_POS and (
+                not self.adjacent(self.pos, self.NPC_POS[self.scene]) or
+                not self.is_facing_point(self.NPC_POS[self.scene])):
             target = "父亲" if self.scene == "home" else "青梅"
-            self.show_toast(f"请靠近{target}后按中心键。", 1.8)
+            self.show_toast(f"请贴着{target}并面对他，再按中心键。", 1.8)
             return
         if self.scene == "home" and not self.father_done:
             self.dialogue = list(self.story_events["father"])
             self.dialogue_index = 0
+            self.dialogue_source = "father"
             self.father_done = True
         elif self.scene == "friend" and not self.friend_met:
             self.dialogue = list(self.story_events["friend"])
             self.dialogue_index = 0
+            self.dialogue_source = "friend"
             self.friend_met = True
         elif self.scene == "friend" and self.friend_met and not self.battle_won:
             self.start_battle()
@@ -936,6 +1028,8 @@ class Game:
         self.rock_broken = False
         self.dialogue = []
         self.dialogue_index = 0
+        self.dialogue_source = None
+        self.triggered_step_events.clear()
         self.meteor_phase = 0
         self.player_hp, self.enemy_hp = 100, 100
         self.show_toast("回到父亲的家。靠近左上角父亲并按 Enter。", 3)
@@ -1031,7 +1125,7 @@ class Game:
             self.map_rect = pygame.Rect(0, 0, PLAY_W, HEIGHT)
             self.screen.fill((46, 91, 58), (0, 0, PLAY_W, HEIGHT))
         if self.scene == "home":
-            self.draw_npc_at("home", self.player, "父亲")
+            self.draw_npc_at("home", self.father_frames, "父亲")
         elif self.scene == "friend":
             self.draw_npc_at("friend", self.friend, "青梅")
         elif self.scene == "route":
@@ -1109,7 +1203,12 @@ class Game:
         self.screen.blit(self.fade_overlay, (0, 0))
 
     def draw_npc(self, x, y, image, label):
-        if image:
+        if isinstance(image, dict):
+            frames = image.get("down", [])
+            sprite = frames[1 if len(frames) > 1 else 0] if frames else None
+            if sprite:
+                self.screen.blit(sprite, sprite.get_rect(center=(x, y)))
+        elif image:
             image = pygame.transform.scale(image, (32, 32))
             self.screen.blit(image, image.get_rect(center=(x, y)))
         else:

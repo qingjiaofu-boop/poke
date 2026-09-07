@@ -135,3 +135,53 @@ python tools/event_editor.py
 ```
 
 在窗口中选择 `father`（父亲事件）或 `friend`（青梅事件），新增、更新、删除对白后点击“保存 JSON”。重新启动游戏即可看到新的立绘对白。当前立绘使用 `introOak.png`、`introMarill.png` 和坚果哑铃素材；没有对应立绘时仍会正常显示文本框。
+
+普通 NPC 事件与 RPG Maker 的行为一致：NPC 自己所在的一格不可通行，主角必须走到相邻格、**面向 NPC** 后按 `Enter`（开发板中心键）才会触发对话。父亲使用独立的 `FERROTHORN_STC.png` 四方向角色图，和主控的 `FERROTHORN_USER.png` 区分开。
+
+踩格事件在 `assets/step_events.json` 中配置，键名格式为 `"格子X,格子Y"`。主角完成走入该格的一步后自动触发一次；按 `R` 重开后可再次触发。示例中的 `route` 的 `"11,14"` 就是从 1 号道路起点向上走一格后触发。
+
+## 事件配置速查
+
+所有事件都使用地图局部坐标，左上角为 `(0,0)`，向右为 X 增加，向下为 Y 增加。游戏右上角会显示当前 X/Y；地图编辑器也能用于核对格子位置。
+
+### 确认键 NPC 事件
+
+`essentials_adventure.py` 中的 `NPC_POS` 管理 NPC 格坐标。NPC 的那一格由程序自动视为碰撞格，不能走入。主角站在上下左右相邻的一格并且面朝 NPC 时，按 `Enter` 或 STC-B 中心键触发对应事件。
+
+父亲使用 `assets/FERROTHORN_STC.png` 四方向角色图；主控使用不同的 `FERROTHORN_USER.png`。父亲和青梅的文本在 `assets/story_events.json` 中编辑，格式如下：
+
+```json
+{
+  "father": [
+    {"speaker": "父亲", "text": "第一句对白"}
+  ]
+}
+```
+
+### 踩格自动事件
+
+在 `assets/step_events.json` 的地图名下添加 `"X,Y"` 记录。每个格子默认每次流程只触发一次，按 `R` 重置流程后可以再次触发。
+
+```json
+{
+  "route": {
+    "11,14": [
+      {"speaker": "青梅", "text": "走到这里时自动触发。"}
+    ]
+  }
+}
+```
+
+## 对战素材与后续扩展
+
+资源包已包含可直接使用的绿宝石风格对战素材，不需要额外下载：
+
+| 资源 | 位置 | 当前用途 |
+| --- | --- | --- |
+| 对战背景、平台、消息框 | `assets/resource/battle/backgrounds/` | 已用于训练战斗背景 |
+| 坚果哑铃及野生宝可梦正背面 | `assets/resource/battle/pokemon/front/`、`back/` | 坚果哑铃已用于训练战斗；可替换敌方立绘 |
+| 技能特效 | `assets/resource/battle/effects/` | 可接入日光束、光合作用、重磅冲撞、气象球动画 |
+| 宝可梦对战 UI | `assets/resource/battle/ui/` | 可替换当前简化 HP 与技能菜单 |
+| 音效、招式音效与 BGM | `assets/resource/audio/` | 可在攻击、胜利、菜单操作时播放 |
+
+目前训练战斗已经具备回合制选招、HP、胜负和传感器数值联动。下一阶段建议优先把 `battle/ui` 的状态框和 `battle/effects` 的四个专属招式特效接入现有 `draw_battle` / `use_move`，而不是重写战斗逻辑。
