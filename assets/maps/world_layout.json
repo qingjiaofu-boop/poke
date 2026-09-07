@@ -1,0 +1,114 @@
+{
+  "size": [
+    120,
+    120
+  ],
+  "placements": [
+    {
+      "id": "moonmountain_1",
+      "map": "moonmountain",
+      "x": 25,
+      "y": 0,
+      "rotation": 0
+    },
+    {
+      "id": "route1_1",
+      "map": "route1",
+      "x": 22,
+      "y": 40,
+      "rotation": 0
+    },
+    {
+      "id": "home_1",
+      "map": "home",
+      "x": 26,
+      "y": 64,
+      "rotation": 0
+    },
+    {
+      "id": "forest1_1",
+      "map": "forest1",
+      "x": 4,
+      "y": 62,
+      "rotation": 0
+    }
+  ],
+  "connections": [
+    {
+      "type": "edge",
+      "axis": "horizontal",
+      "from": "moonmountain_1",
+      "to": "route1_1",
+      "from_edge": "bottom",
+      "to_edge": "top",
+      "world_range": {
+        "axis": "x",
+        "start": 25,
+        "end": 58
+      },
+      "from_local_range": {
+        "axis": "x",
+        "start": 0,
+        "end": 33
+      },
+      "to_local_range": {
+        "axis": "x",
+        "start": 3,
+        "end": 36
+      }
+    },
+    {
+      "type": "edge",
+      "axis": "horizontal",
+      "from": "route1_1",
+      "to": "home_1",
+      "from_edge": "bottom",
+      "to_edge": "top",
+      "world_range": {
+        "axis": "x",
+        "start": 26,
+        "end": 50
+      },
+      "from_local_range": {
+        "axis": "x",
+        "start": 4,
+        "end": 28
+      },
+      "to_local_range": {
+        "axis": "x",
+        "start": 0,
+        "end": 24
+      }
+    },
+    {
+      "type": "edge",
+      "axis": "vertical",
+      "from": "forest1_1",
+      "to": "home_1",
+      "from_edge": "right",
+      "to_edge": "left",
+      "world_range": {
+        "axis": "y",
+        "start": 64,
+        "end": 82
+      },
+      "from_local_range": {
+        "axis": "y",
+        "start": 2,
+        "end": 20
+      },
+      "to_local_range": {
+        "axis": "y",
+        "start": 0,
+        "end": 18
+      }
+    }
+  ],
+  "connection_manifest": "maps/world_connections.json",
+  "connection_text_manifest": "maps/world_connections.txt",
+  "preview": {
+    "lower": "maps/world_lower.png",
+    "current": "maps/world_current.png",
+    "upper": "maps/world_upper.png"
+  }
+}
