@@ -350,6 +350,77 @@ def test_bidirectional_warps():
         pygame.quit()
 
 
+def test_ordered_map_event_dialogue_battle_and_once():
+    game = Adventure(None)
+    try:
+        event = {
+            "id": "runtime_test",
+            "name": "运行时事件测试",
+            "map": "world",
+            "position": [10, 10],
+            "icon": "jirachi_sleep_1.png",
+            "once": True,
+            "steps": [
+                {"type": "dialogue", "preload": "jirachi_right.png", "speaker": "基拉祈", "text": "第一句"},
+                {"type": "battle", "battle_id": "placeholder"},
+                {"type": "dialogue", "preload": "no_portrait_center.png", "speaker": "", "text": "战斗结束"},
+            ],
+        }
+        game.map_events = [event]
+        game.map_event_index = {("world", (10, 10)): event}
+        game.map_view = "world"
+        game.map_view_pos[:] = (10, 10)
+
+        assert game.trigger_map_event()
+        assert game.dialogue_source == "map_event"
+        assert game.dialogue_preload == "jirachi_right.png"
+        assert game.load_dialogue_preload(game.dialogue_preload) is not None
+        assert game.load_map_event_icon(event["icon"]) is not None
+
+        game.update_dialogue_reveal()
+        assert game.dialogue_reveal == 0
+        game.update_dialogue_reveal()
+        assert game.dialogue_reveal == 1
+        game.command(5)
+        assert game.dialogue_reveal == len(game.dialogue[0])
+        assert game.active_map_event_step == 0
+        game.command(5)
+        assert game.scene == "battle"
+        assert game.event_battle_active
+
+        game.battle_lost = True
+        game.command(5)
+        assert game.map_view == "world"
+        assert tuple(game.map_view_pos) == (10, 10)
+        assert game.active_map_event_step == 0
+        assert game.dialogue_preload == "jirachi_right.png"
+
+        game.command(5)
+        game.command(5)
+        assert game.scene == "battle"
+        game.battle_won = True
+        game.battle_lost = False
+        game.command(5)
+        assert game.map_view is None
+        assert game.scene == "battle"
+        assert game.active_map_event_step == 2
+        assert game.dialogue_preload == "no_portrait_center.png"
+
+        game.command(5)
+        game.command(5)
+        assert game.active_map_event is None
+        assert game.map_view == "world"
+        assert tuple(game.map_view_pos) == (10, 10)
+        assert "runtime_test" in game.completed_map_events
+        assert not game.trigger_map_event()
+
+        game.reset()
+        assert not game.completed_map_events
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
 if __name__ == "__main__":
     test_story_path()
     test_tile_map_loading_and_view_switching()
@@ -358,4 +429,5 @@ if __name__ == "__main__":
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
     test_bidirectional_warps()
+    test_ordered_map_event_dialogue_battle_and_once()
     print("story path ok")

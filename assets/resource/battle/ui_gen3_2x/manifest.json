@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "scale": 2,
+  "logical_resolution_2x": [
+    480,
+    320
+  ],
+  "native_gba_resolution_1x": [
+    240,
+    160
+  ],
+  "atlas": "gen3_battle_ui_atlas_2x.png",
+  "atlas_size_2x": [
+    1024,
+    512
+  ],
+  "source": "assets/resource/Game Boy Advance - Pokemon FireRed _ LeafGreen - Battle Effects - HP Bars & In-battle Menu.png",
+  "sprites": {
+    "databox_foe": {
+      "atlas_rect_2x": [
+        0,
+        0,
+        192,
+        68
+      ],
+      "file": "databox_foe_2x.png",
+      "source_rect_1x": [
+        2,
+        2,
+        98,
+        36
+      ]
+    },
+    "databox_player_classic": {
+      "atlas_rect_2x": [
+        208,
+        0,
+        200,
+        84
+      ],
+      "file": "databox_player_classic_2x.png",
+      "source_rect_1x": [
+        8,
+        42,
+        108,
+        84
+      ]
+    },
+    "databox_player": {
+      "atlas_rect_2x": [
+        424,
+        0,
+        200,
+        68
+      ],
+      "file": "databox_player_2x.png"
+    },
+    "panel_command_classic": {
+      "atlas_rect_2x": [
+        0,
+        112,
+        242,
+        100
+      ],
+      "file": "panel_command_classic_2x.png",
+      "source_rect_1x": [
+        146,
+        3,
+        267,
+        53
+      ]
+    },
+    "panel_command": {
+      "atlas_rect_2x": [
+        258,
+        112,
+        242,
+        100
+      ],
+      "file": "panel_command_2x.png"
+    },
+    "panel_move_list": {
+      "atlas_rect_2x": [
+        0,
+        232,
+        318,
+        100
+      ],
+      "file": "panel_move_list_2x.png",
+      "source_rect_1x": [
+        297,
+        3,
+        456,
+        53
+      ]
+    },
+    "panel_move_info_classic": {
+      "atlas_rect_2x": [
+        524,
+        112,
+        156,
+        100
+      ],
+      "file": "panel_move_info_classic_2x.png",
+      "source_rect_1x": [
+        459,
+        3,
+        537,
+        53
+      ]
+    },
+    "panel_move_info": {
+      "atlas_rect_2x": [
+        696,
+        112,
+        156,
+        100
+      ],
+      "file": "panel_move_info_2x.png"
+    },
+    "panel_message": {
+      "atlas_rect_2x": [
+        334,
+        232,
+        480,
+        92
+      ],
+      "file": "panel_message_2x.png",
+      "source_rect_1x": [
+        297,
+        57,
+        537,
+        103
+      ]
+    },
+    "panel_message_left": {
+      "atlas_rect_2x": [
+        0,
+        352,
+        240,
+        92
+      ],
+      "file": "panel_message_left_2x.png"
+    },
+    "cursor_command": {
+      "atlas_rect_2x": [
+        640,
+        0,
+        20,
+        22
+      ],
+      "file": "cursor_command_2x.png",
+      "source_rect_1x": [
+        268,
+        3,
+        278,
+        14
+      ]
+    },
+    "cursor_continue": {
+      "atlas_rect_2x": [
+        676,
+        0,
+        20,
+        22
+      ],
+      "file": "cursor_continue_2x.png",
+      "source_rect_1x": [
+        541,
+        55,
+        551,
+        66
+      ]
+    },
+    "hp_fill_green": {
+      "atlas_rect_2x": [
+        704,
+        0,
+        96,
+        6
+      ],
+      "file": "hp_fill_green_2x.png"
+    },
+    "hp_fill_yellow": {
+      "atlas_rect_2x": [
+        704,
+        16,
+        96,
+        6
+      ],
+      "file": "hp_fill_yellow_2x.png"
+    },
+    "hp_fill_red": {
+      "atlas_rect_2x": [
+        704,
+        32,
+        96,
+        6
+      ],
+      "file": "hp_fill_red_2x.png"
+    },
+    "hp_fill_empty": {
+      "atlas_rect_2x": [
+        704,
+        48,
+        96,
+        6
+      ],
+      "file": "hp_fill_empty_2x.png"
+    }
+  },
+  "recommended_screen_layouts_2x": {
+    "databox_foe": [
+      6,
+      8,
+      192,
+      68
+    ],
+    "databox_player": [
+      280,
+      146,
+      200,
+      68
+    ],
+    "message_full": [
+      0,
+      228,
+      480,
+      92
+    ],
+    "message_left": [
+      0,
+      228,
+      240,
+      92
+    ],
+    "command_panel": [
+      238,
+      220,
+      242,
+      100
+    ],
+    "move_list": [
+      0,
+      220,
+      318,
+      100
+    ],
+    "move_info": [
+      324,
+      220,
+      156,
+      100
+    ]
+  }
+}

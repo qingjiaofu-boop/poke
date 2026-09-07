@@ -19,6 +19,11 @@ import pygame
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from event_system import ICON_DIR, load_event_document  # noqa: E402
+
 ASSETS = ROOT / "assets"
 # Prefer the copy committed with the project so teammates can edit maps after
 # cloning. The original local path remains a fallback for older workspaces.
@@ -179,6 +184,27 @@ def _event_char(event):
     return ""
 
 
+def _fit_event_icon(path):
+    """Normalize a sprite-sheet icon to the runtime's 32x32 event tile."""
+    source = pygame.image.load(str(path)).convert_alpha()
+    if source.get_width() >= source.get_height() * 2:
+        source = source.subsurface((0, 0, source.get_height(), source.get_height())).copy()
+    bounds = source.get_bounding_rect(min_alpha=1)
+    if not bounds.width or not bounds.height:
+        return pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+    source = source.subsurface(bounds).copy()
+    scale = min(28 / source.get_width(), 28 / source.get_height())
+    source = pygame.transform.scale(
+        source,
+        (max(1, round(source.get_width() * scale)),
+         max(1, round(source.get_height() * scale))),
+    )
+    result = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
+    result.blit(source, ((TILE - source.get_width()) // 2,
+                         TILE - source.get_height() - 2))
+    return result
+
+
 def main(name: str):
     global MAP_W, MAP_H
     pygame.init()
@@ -221,6 +247,8 @@ def main(name: str):
     open_list = []
     open_cursor = 0
     open_scroll = 0
+    map_events = load_event_document()["events"]
+    event_icon_cache = {}
     # 相机（视口）状态：cam 为地图像素偏移，origin/view 为屏上显示位置与可见尺寸。
     cam_x, cam_y = 0, 0
     origin_x, origin_y = MAP_FRAME.x, MAP_FRAME.y
@@ -606,6 +634,40 @@ def main(name: str):
                     pygame.draw.rect(overlay, (*highlight, 165), rect, 1)
         blit_layer_view(overlay)
 
+    def reload_event_overlays(notify=True):
+        nonlocal map_events, event_icon_cache
+        map_events = load_event_document()["events"]
+        event_icon_cache = {}
+        if notify:
+            count = sum(1 for item in map_events if item.get("map") == name)
+            show_notice(["事件标记已重新加载", f"当前地图共有 {count} 个事件。"], seconds=2.5)
+
+    def draw_event_overlays():
+        screen.set_clip(MAP_FRAME)
+        for item in map_events:
+            if item.get("map") != name:
+                continue
+            x, y = item["position"]
+            if not (0 <= x < MAP_W and 0 <= y < MAP_H):
+                continue
+            icon_name = Path(str(item.get("icon", ""))).name
+            icon = event_icon_cache.get(icon_name)
+            if icon_name and icon_name not in event_icon_cache:
+                try:
+                    icon = _fit_event_icon(ICON_DIR / icon_name)
+                except (pygame.error, FileNotFoundError):
+                    icon = None
+                event_icon_cache[icon_name] = icon
+            rect = map_rect(x * TILE, y * TILE, TILE, TILE)
+            if icon:
+                screen.blit(icon, rect.topleft)
+            pygame.draw.rect(screen, (75, 224, 205), rect, 2)
+            if any(step.get("type") == "battle" for step in item.get("steps", [])):
+                badge = pygame.Rect(rect.x, rect.y, 15, 15)
+                pygame.draw.rect(screen, (190, 43, 43), badge)
+                screen.blit(small.render("B", True, (255, 255, 255)), (badge.x + 2, badge.y - 2))
+        screen.set_clip(None)
+
     clock = pygame.time.Clock()
     while running:
         for event in pygame.event.get():
@@ -671,6 +733,8 @@ def main(name: str):
                     enter_resize()
                 elif event.key == pygame.K_g:
                     enter_page_jump()
+                elif event.key == pygame.K_F5:
+                    reload_event_overlays()
                 elif event.key == pygame.K_s and (event.mod & pygame.KMOD_CTRL):
                     save()
                 elif event.key == pygame.K_c and (event.mod & pygame.KMOD_CTRL):
@@ -804,6 +868,7 @@ def main(name: str):
         update_camera()
         # Map preview with active-layer focus.
         draw_layer_preview()
+        draw_event_overlays()
         if not preview_mode:
             screen.set_clip(MAP_FRAME)
             for x, y in blocked:
@@ -856,7 +921,7 @@ def main(name: str):
         layer_name = '游戏预览' if preview_mode else ('地面' if layer == 0 else '当前' if layer == 1 else '上层')
         layer_color = ((92, 210, 255), (255, 190, 75), (205, 145, 255))[layer]
         screen.blit(font.render(f"地图：{name}   当前层：{layer_name}", True, (242, 244, 218) if preview_mode else layer_color), (400, 28))
-        screen.blit(small.render("1/2/3切层 4预览 M框选 Ctrl+C/V复制粘贴 T图块 O打开 E扩充 WASD平移 Ctrl+S保存 Esc", True, (190, 210, 190)), (400, 50))
+        screen.blit(small.render("1/2/3切层 4预览 M框选 Ctrl+C/V复制粘贴 T图块 O打开 E扩充 F5事件 WASD平移 Ctrl+S保存 Esc", True, (190, 210, 190)), (400, 50))
         if MAP_W * TILE > MAP_FRAME.width or MAP_H * TILE > MAP_FRAME.height:
             screen.blit(small.render(f"视口可滚动：WASD/滚轮平移（{MAP_W}×{MAP_H} 格）", True, (150, 214, 168)), (400, 68))
         pygame.draw.rect(screen, (20, 30, 28), (8, 78, 368, 620), border_radius=8)
@@ -893,7 +958,7 @@ def main(name: str):
             screen.blit(small.render("当前为游戏画面预览：三层已正常合成", True, (178, 222, 184)), (24, 460))
         else:
             screen.blit(small.render("彩色描边 = 当前编辑层（其他层已变暗）", True, layer_color), (24, 460))
-            screen.blit(small.render("红框 = 当前层碰撞   黄框 = 出生点", True, (205, 220, 198)), (24, 485))
+            screen.blit(small.render("红框=碰撞 黄框=出生点 青框=事件 红B=入战", True, (205, 220, 198)), (24, 485))
         pygame.draw.rect(screen, (61, 109, 87) if dirty else (48, 74, 64), SAVE_BUTTON, border_radius=5)
         pygame.draw.rect(screen, (142, 230, 151) if dirty else (137, 171, 139), SAVE_BUTTON, 2, border_radius=5)
         screen.blit(font.render("保存地图  [Ctrl+S]", True, (245, 246, 219)), (SAVE_BUTTON.x + 66, SAVE_BUTTON.y + 5))

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "id": "new_event",
+      "name": "jrc",
+      "map": "finalcave",
+      "position": [
+        7,
+        6
+      ],
+      "icon": "jirachi_sleep_3.png",
+      "once": true,
+      "steps": [
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "是一只宝可梦...在睡觉？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "这就是那颗在我脑中梦呓的...迷路的星星吗？"
+        }
+      ]
+    }
+  ]
+}
