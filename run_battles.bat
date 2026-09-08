@@ -1,3 +1,7 @@
 @echo off
 cd /d "%~dp0"
-python battle_demo.py %*
+if "%~1"=="" (
+  python battle_demo.py
+) else (
+  python battle_demo.py --port "%~1"
+)

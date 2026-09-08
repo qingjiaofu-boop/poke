@@ -50,8 +50,10 @@ void nav_callback(void){
 }
 
 void key_callback(void){
-    if(GetKeyAct(enumKey1)==enumKeyPress) send(0x06);
-    if(GetKeyAct(enumKey2)==enumKeyPress) send(0x07);
+    /* K1 is the game confirm key (the same action as keyboard Enter). */
+    if(GetKeyAct(enumKey1)==enumKeyPress) send(0x05);
+    /* K2 remains available for restart/reset in the desktop program. */
+    if(GetKeyAct(enumKey2)==enumKeyPress) send(0x06);
 }
 
 /* 震动切换页面；冷却 700ms，避免一次晃动重复触发。 */

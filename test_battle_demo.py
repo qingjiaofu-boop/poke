@@ -10,6 +10,8 @@ from battle_demo import (
     PLAYER_BOX_RECT,
     STC_VIBRATION_COMMAND,
     EncounterBattleRules,
+    light_solar_power,
+    light_synthesis_percent,
 )
 
 
@@ -72,6 +74,37 @@ class EncounterBattleRulesTests(unittest.TestCase):
     def test_primary_layout_uses_2x_pixel_coordinates(self):
         layouts = (FOE_BOX_RECT, PLAYER_BOX_RECT, MESSAGE_POS, MOVE_LIST_POS, MOVE_INFO_POS)
         self.assertTrue(all(value % 2 == 0 for layout in layouts for value in layout))
+
+    def test_light_mapping_uses_the_requested_endpoints_and_clamp(self):
+        self.assertEqual(light_solar_power(0), 70)
+        self.assertEqual(light_solar_power(105), 120)
+        self.assertEqual(light_solar_power(500), 120)
+        self.assertEqual(light_synthesis_percent(0), 30)
+        self.assertEqual(light_synthesis_percent(105), 50)
+        self.assertEqual(light_synthesis_percent(500), 50)
+
+    def test_light_mapping_changes_inside_the_normal_range(self):
+        self.assertGreater(light_solar_power(90), 70)
+        self.assertLess(light_solar_power(90), 120)
+        self.assertGreater(light_synthesis_percent(90), 30)
+        self.assertLess(light_synthesis_percent(90), 50)
+
+    def test_vibration_is_safe_when_cursor_has_no_move(self):
+        # Z/0x09 can arrive asynchronously while switching encounters.
+        import os
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+        os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        import pygame
+        from battle_demo import BattleEncounterDemo
+        pygame.init()
+        try:
+            demo = BattleEncounterDemo(pygame, encounter_key="zubat", audio=False)
+            demo.phase = demo.PHASE_MENU
+            demo.cursor = 2
+            self.assertFalse(demo.handle_vibration())
+            demo.serial.close()
+        finally:
+            pygame.quit()
 
 
 if __name__ == "__main__":

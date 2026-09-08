@@ -97,10 +97,10 @@ python sensor_monitor.py COM3
 运行目前独立于主线的 480×320 战斗原型：
 
 ```powershell
-python battle_demo.py
+python battle_demo.py --port COM3
 ```
 
-也可以双击 `run_battles.bat`。数字键 `1`、`2`、`3` 随时切换超音蝠、可可多拉和勾魂眼；方向键选择技能，`Enter` 或空格确认普通技能，勾魂眼战的“重磅冲撞”必须选中后按 `Z` 触发，`R` 重开，`Esc` 退出。`Z` 与预留的 STC-B 振动串口命令 `0x09` 共用同一处理入口。窗口默认以 2 倍整数倍显示；调整窗口时仍保持整数倍最近邻缩放。三场测试分别按照 `assets/resource/battle/battle_with_zubat.txt`、`battle_with_aron.txt` 和 `battle_with_sableye.txt` 使用固定 HP、伤害与回复量，不显示等级、经验值或 PP。可用 `--seed 17` 固定敌方随机选招、用 `--encounter aron` 指定初始战斗，或用 `--mute` 静音运行。
+也可以双击 `run_battles.bat`，连接开发板时使用 `run_battles.bat COM3`。数字键 `1`、`2`、`3` 随时切换超音蝠、可可多拉和勾魂眼；方向键选择技能，`Enter` 或空格确认普通技能，勾魂眼战的“重磅冲撞”必须选中后按 `Z` 触发，`R` 重开，`Esc` 退出。`Z` 与 STC-B 震动命令 `0x09` 共用同一处理入口。光照 `0` 到 `105` 映射日光束威力 `70` 到 `120`，光合作用回复 `30%` 到 `50%`，中间线性插值。完整应用流程和可复用提示词见 [docs/STC_BATTLE_FLOW.md](docs/STC_BATTLE_FLOW.md)。
 
 ## 数据驱动战斗框架
 
