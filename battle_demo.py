@@ -11,9 +11,12 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import queue
 import random
 import sys
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -26,6 +29,8 @@ LOGICAL_SIZE = (480, 320)
 DEFAULT_WINDOW_SCALE = 2
 FPS = 60
 STC_VIBRATION_COMMAND = 0x09
+STC_LIGHT_MARKER = 0x40
+STC_TEMPERATURE_MARKER = 0x41
 
 FOE_BOX_RECT = (6, 8, 192, 68)
 PLAYER_BOX_RECT = (280, 146, 200, 68)
@@ -62,6 +67,53 @@ class EncounterSpec:
     opening_notes: tuple[str, ...] = ()
 
 
+class STCSerialBridge:
+    """Read the STC-B byte protocol and forward raw events to the battle UI."""
+
+    def __init__(self, port: str | None, on_event):
+        self.port = port
+        self.on_event = on_event
+        self.stop = threading.Event()
+        self.link = None
+        self.status = "键盘模式"
+        self.marker = None
+        self.high = None
+
+    def start(self):
+        if not self.port:
+            return
+        try:
+            import serial
+            self.link = serial.Serial(self.port, 9600, timeout=0.2)
+            self.status = f"串口已连接：{self.port}"
+        except Exception as exc:
+            self.status = f"串口连接失败：{exc}"
+            return
+        threading.Thread(target=self._read_loop, daemon=True).start()
+
+    def _read_loop(self):
+        while not self.stop.is_set() and self.link:
+            data = self.link.read(64)
+            for value in data:
+                if value in (STC_LIGHT_MARKER, STC_TEMPERATURE_MARKER):
+                    self.marker, self.high = value, None
+                elif self.marker is not None:
+                    if self.high is None:
+                        self.high = value
+                    else:
+                        raw = (self.high << 8) | value
+                        kind = "light" if self.marker == STC_LIGHT_MARKER else "temperature"
+                        self.on_event(kind, raw)
+                        self.marker, self.high = None, None
+                elif value == STC_VIBRATION_COMMAND:
+                    self.on_event("vibration", value)
+
+    def close(self):
+        self.stop.set()
+        if self.link:
+            self.link.close()
+
+
 ZUBAT_PLAYER_MOVES = (
     MoveSpec("日光束", "特殊", "威力：70", damage=20, effect="solar"),
     MoveSpec("光合作用", "变化", "回复量：30%", heal_percent=30, effect="synthesis"),
@@ -95,6 +147,21 @@ SABLEYE_FOE_MOVES = (
     MoveSpec("移花接木", "物理", "", damage=58, effect="heavy"),
     MoveSpec("暗影爪", "物理", "", damage=70, effect="tackle"),
 )
+
+
+def clamp_light(raw: int | None) -> int:
+    """Keep the board's reported light value in the requested 0..105 range."""
+    return max(0, min(105, 0 if raw is None else int(raw)))
+
+
+def light_solar_power(raw: int | None) -> int:
+    """Map darkness 0 to power 70 and 105+ to power 120."""
+    return 70 + round(clamp_light(raw) * 50 / 105)
+
+
+def light_synthesis_percent(raw: int | None) -> int:
+    """Map darkness 0 to 30% healing and 105+ to 50%."""
+    return 30 + round(clamp_light(raw) * 20 / 105)
 
 ENCOUNTERS = {
     "zubat": EncounterSpec(
@@ -200,9 +267,45 @@ class BattleEncounterDemo:
         self.assets = self._load_assets()
         self.effects = self._load_effects()
         self.sounds = self._load_sounds() if audio else {}
+        self.serial_events = queue.Queue()
+        self.light_raw = 0
+        self.temperature_raw = None
+        self.serial = STCSerialBridge(None, self._queue_serial_event)
 
         self.hp_tween: dict | None = None
         self.reset(encounter_key)
+
+    def _queue_serial_event(self, kind: str, value: int) -> None:
+        self.serial_events.put((kind, value))
+
+    def set_serial_port(self, port: str | None) -> None:
+        self.serial.close()
+        self.serial = STCSerialBridge(port, self._queue_serial_event)
+        self.serial.start()
+
+    def _poll_serial(self) -> None:
+        while True:
+            try:
+                kind, value = self.serial_events.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "light":
+                self.light_raw = value
+            elif kind == "temperature":
+                self.temperature_raw = value
+            elif kind == "vibration":
+                self.handle_serial_command(value)
+
+    def _current_player_moves(self) -> tuple[MoveSpec, ...]:
+        moves = list(self.encounter.player_moves)
+        for index, move in enumerate(moves):
+            if move.effect == "solar":
+                power = light_solar_power(self.light_raw)
+                moves[index] = replace(move, value_label=f"威力：{power}", damage=max(1, round(move.damage * power / 70)))
+            elif move.effect == "synthesis":
+                percent = light_synthesis_percent(self.light_raw)
+                moves[index] = replace(move, value_label=f"回复量：{percent}%", heal_percent=percent)
+        return tuple(moves)
 
     def _font(self, size: int):
         candidates = (
@@ -376,7 +479,7 @@ class BattleEncounterDemo:
         return False
 
     def _select_player_move(self) -> None:
-        self.selected_move = self.encounter.player_moves[self.cursor]
+        self.selected_move = self._current_player_moves()[self.cursor]
         self._play_sound("confirm")
         self._set_phase(self.PHASE_PLAYER_MESSAGE, f"坚果哑铃使出了{self.selected_move.name}！")
 
@@ -384,7 +487,10 @@ class BattleEncounterDemo:
         """Handle STC-B command 0x09; keyboard Z uses the same path for now."""
         if self.phase != self.PHASE_MENU:
             return False
-        move = self.encounter.player_moves[self.cursor]
+        moves = self._current_player_moves()
+        if self.cursor >= len(moves):
+            return False
+        move = moves[self.cursor]
         if move.trigger != "vibration":
             return False
         self._select_player_move()
@@ -521,7 +627,7 @@ class BattleEncounterDemo:
             if key in (pg.K_LEFT, pg.K_RIGHT, pg.K_UP, pg.K_DOWN):
                 self._move_cursor(key)
             elif key in (pg.K_RETURN, pg.K_SPACE):
-                move = self.encounter.player_moves[self.cursor]
+                move = self._current_player_moves()[self.cursor]
                 if move.trigger == "vibration":
                     self.menu_hint = ("需要敲击小板", "或按Z触发")
                     self.menu_hint_until = pg.time.get_ticks() + 1500
@@ -546,6 +652,7 @@ class BattleEncounterDemo:
             self._begin_foe_action()
 
     def update(self) -> None:
+        self._poll_serial()
         self._update_hp_tween()
         elapsed = self._elapsed()
         if (
@@ -697,9 +804,10 @@ class BattleEncounterDemo:
         self.canvas.blit(self.assets["move_list"], MOVE_LIST_POS)
         self.canvas.blit(self.assets["move_info"], MOVE_INFO_POS)
         positions = ((28, 234), (174, 234), (28, 274), (174, 274))
+        player_moves = self._current_player_moves()
         for index, position in enumerate(positions):
-            if index < len(self.encounter.player_moves):
-                text = self.encounter.player_moves[index].name
+            if index < len(player_moves):
+                text = player_moves[index].name
                 font = self.font
                 color = TEXT_COLOR
             else:
@@ -711,7 +819,7 @@ class BattleEncounterDemo:
         cursor_y = 232 + (self.cursor // 2) * 40
         self.canvas.blit(self.assets["cursor"], (cursor_x, cursor_y))
 
-        move = self.encounter.player_moves[self.cursor]
+        move = player_moves[self.cursor]
         if self.menu_hint and self.pg.time.get_ticks() < self.menu_hint_until:
             info_lines = self.menu_hint
         else:
@@ -719,6 +827,8 @@ class BattleEncounterDemo:
             info_lines = move.info_lines or (f"属性/{move.category}", move.value_label)
         self.canvas.blit(self.small_font.render(info_lines[0], False, INFO_COLOR), (338, 236))
         self.canvas.blit(self.small_font.render(info_lines[1], False, INFO_COLOR), (338, 272))
+        sensor_text = f"光照原始值：{self.light_raw}  日光束：{light_solar_power(self.light_raw)}  光合作用：{light_synthesis_percent(self.light_raw)}%"
+        self.canvas.blit(self.small_font.render(sensor_text, False, INFO_COLOR), (18, 206))
 
     def _draw_message_panel(self) -> None:
         self.canvas.blit(self.assets["message"], MESSAGE_POS)
@@ -773,6 +883,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=None, help="固定敌方选招随机种子")
     parser.add_argument("--mute", action="store_true", help="关闭 BGM 和音效")
+    parser.add_argument("--port", help="STC-B 串口号，例如 COM3")
     parser.add_argument("--screenshot", type=Path, help="无窗口保存 480x320 测试截图")
     parser.add_argument("--phase", choices=("intro", "menu"), default="menu", help="截图阶段")
     return parser.parse_args(argv)
@@ -803,12 +914,15 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             audio=not args.mute,
         )
+        demo.set_serial_port(args.port)
         if args.screenshot:
             demo.save_screenshot(args.screenshot.resolve(), args.phase)
             print(args.screenshot.resolve())
         else:
             demo.run()
     finally:
+        if "demo" in locals():
+            demo.serial.close()
         pygame.quit()
     return 0
 
