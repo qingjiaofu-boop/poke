@@ -1,0 +1,52 @@
+{
+  "id": "grotle_tutorial",
+  "kind": "scripted_tutorial",
+  "player": {
+    "name": "坚果哑铃",
+    "max_hp": 100
+  },
+  "opponent": {
+    "name": "树林龟",
+    "max_hp": 100,
+    "sprite": "resource/dialogue/pokemons/GROTLE.png"
+  },
+  "moves": {
+    "solar_beam": {
+      "name": "日光束",
+      "effect": "solar",
+      "damage_min": 34,
+      "damage_max": 55,
+      "info": ["属性/特殊", "光照决定威力"]
+    },
+    "synthesis": {
+      "name": "光合作用",
+      "effect": "synthesis",
+      "heal_min": 40,
+      "heal_max": 60,
+      "info": ["属性/变化", "光照决定回复量"]
+    }
+  },
+  "opponent_move": {
+    "name": "日光束",
+    "effect": "solar",
+    "damage": 33
+  },
+  "messages": {
+    "intro_absorb": "树林龟：进化后你吸收光照的能力应该变强了。",
+    "intro_focus": "树林龟：感受光芒的力量，控制它在身体里聚成一处。",
+    "enemy_demo_announce": "树林龟使出了日光束！",
+    "try_solar": "树林龟：来吧，你也试试看使出一次日光束！",
+    "solar_help": "日光束是草系特殊技能。光照越强，使出的威力越高。",
+    "praise": "树林龟：干得不错！",
+    "synthesis_explain": "树林龟：把吸进来的光留给自己，让它在身体里慢慢化开，这就是『光合作用』。",
+    "enemy_second_announce": "树林龟使出了日光束！",
+    "synthesis_prompt": "技能栏新增了『光合作用』。",
+    "synthesis_help": "光合作用可以治愈伤势。光照越强，回复的体力越多。",
+    "free_help": "自由发挥，击败树林龟吧！",
+    "enemy_free_announce": "树林龟使出了日光束！",
+    "wrong_solar": "现在先试着使出一次日光束。",
+    "wrong_synthesis": "现在先试着使出一次光合作用。",
+    "won": "树林龟倒下了！",
+    "lost": "坚果哑铃倒下了！按 Enter 从事件开头重新挑战。"
+  }
+}

@@ -37,7 +37,7 @@ def test_story_path():
         game.move_cursor = 1
         game.command(5)
         assert game.battle_won
-        for _ in range(32):
+        for _ in range(120):
             game.update_battle_effect()
         game.command(5)
         assert game.scene == "route"
@@ -123,6 +123,12 @@ def test_battle_assets_and_sensor_moves():
         assert game.scene == "battle"
         assert game.enemy_battle is not None
         assert game.battle_ui["fight"] is not None
+        assert game.ferro_battle.get_size() == (160, 160)
+        assert game.grotle_battle.get_size() == (160, 160)
+        assert game.battle_ui["foe_box"].get_size() == (192, 68)
+        assert game.battle_ui["player_box"].get_size() == (200, 68)
+        assert game.battle_ui["fight"].get_size() == (318, 100)
+        assert game.battle_ui["move_info"].get_size() == (156, 100)
         assert all(game.battle_effect_frames[name]
                    for name in ("synthesis", "solar", "heavy", "weather"))
 
@@ -382,7 +388,7 @@ def test_ordered_map_event_dialogue_battle_and_once():
         game.update_dialogue_reveal()
         assert game.dialogue_reveal == 1
         game.command(5)
-        assert game.dialogue_reveal == len(game.dialogue[0])
+        assert game.dialogue_reveal == len("第一句")
         assert game.active_map_event_step == 0
         game.command(5)
         assert game.scene == "battle"
@@ -401,8 +407,8 @@ def test_ordered_map_event_dialogue_battle_and_once():
         game.battle_won = True
         game.battle_lost = False
         game.command(5)
-        assert game.map_view is None
-        assert game.scene == "battle"
+        assert game.map_view == "world"
+        assert tuple(game.map_view_pos) == (10, 10)
         assert game.active_map_event_step == 2
         assert game.dialogue_preload == "no_portrait_center.png"
 

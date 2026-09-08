@@ -100,6 +100,9 @@ class EventEditor(tk.Tk):
         self.event_y = tk.IntVar(value=0)
         self.event_icon = tk.StringVar(value=self.icons[0] if self.icons else "")
         self.event_once = tk.BooleanVar(value=True)
+        self.event_trigger = tk.StringVar(value="step")
+        self.required_flags = tk.StringVar()
+        self.forbidden_flags = tk.StringVar()
         self.zoom = tk.DoubleVar(value=0.5)
         self.step_type = tk.StringVar(value="dialogue")
         default_preload = "no_portrait_bottom.png"
@@ -109,6 +112,14 @@ class EventEditor(tk.Tk):
         )
         self.step_speaker = tk.StringVar()
         self.battle_id = tk.StringVar(value="placeholder")
+        self.step_value = tk.StringVar()
+        self.step_x = tk.IntVar(value=0)
+        self.step_y = tk.IntVar(value=0)
+        self.step_duration = tk.IntVar(value=800)
+        self.step_intensity = tk.IntVar(value=6)
+        self.step_actor = tk.StringVar(value="event")
+        self.step_visible = tk.BooleanVar(value=True)
+        self.camera_target = tk.StringVar(value="position")
         self.status = tk.StringVar(value=f"事件文件：{EVENTS_PATH}")
 
         self._build()
@@ -160,9 +171,9 @@ class EventEditor(tk.Tk):
             "1. 新建或选择事件\n"
             "2. 在地图上点击触发格\n"
             "3. 选择 32x32 地图图标\n"
-            "4. 按顺序添加对白/战斗步骤\n"
+            "4. 按顺序添加对白、战斗或演出步骤\n"
             "5. 保存后重新启动游戏\n\n"
-            "对白预览会自动逐字播放。战斗步骤目前调用现有训练战，作为后续战斗配置的占位入口。"
+            "对白预览会自动逐字播放。grotle_tutorial 会启动树林龟教学战；镜头和动画步骤按地图格坐标执行。"
         )
         ttk.Label(sidebar, text=help_text, wraplength=225, justify="left").pack(fill="x")
 
@@ -178,16 +189,26 @@ class EventEditor(tk.Tk):
         ttk.Spinbox(meta, textvariable=self.event_x, from_=0, to=999, width=5, command=self._coordinates_changed).grid(row=0, column=5)
         ttk.Label(meta, text="Y").grid(row=0, column=6, sticky="e")
         ttk.Spinbox(meta, textvariable=self.event_y, from_=0, to=999, width=5, command=self._coordinates_changed).grid(row=0, column=7)
-        ttk.Label(meta, text="图标").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Label(meta, text="触发方式").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        trigger_box = ttk.Combobox(
+            meta, textvariable=self.event_trigger,
+            values=("step", "game_start", "warp_attempt"), state="readonly", width=18,
+        )
+        trigger_box.grid(row=1, column=1, sticky="ew", padx=4, pady=(7, 0))
+        ttk.Label(meta, text="必须标记").grid(row=1, column=2, sticky="w", padx=(10, 0), pady=(7, 0))
+        ttk.Entry(meta, textvariable=self.required_flags).grid(row=1, column=3, sticky="ew", padx=4, pady=(7, 0))
+        ttk.Label(meta, text="禁止标记").grid(row=1, column=4, sticky="e", pady=(7, 0))
+        ttk.Entry(meta, textvariable=self.forbidden_flags).grid(row=1, column=5, columnspan=3, sticky="ew", padx=4, pady=(7, 0))
+        ttk.Label(meta, text="图标").grid(row=2, column=0, sticky="w", pady=(7, 0))
         icon_box = ttk.Combobox(meta, textvariable=self.event_icon, values=self.icons, state="readonly", width=24)
-        icon_box.grid(row=1, column=1, columnspan=2, sticky="ew", padx=4, pady=(7, 0))
+        icon_box.grid(row=2, column=1, columnspan=2, sticky="ew", padx=4, pady=(7, 0))
         icon_box.bind("<<ComboboxSelected>>", lambda _event: self._draw_map())
-        ttk.Checkbutton(meta, text="单次游玩只触发一次", variable=self.event_once).grid(row=1, column=3, columnspan=2, sticky="w", padx=4, pady=(7, 0))
-        ttk.Label(meta, text="缩放").grid(row=1, column=5, sticky="e", pady=(7, 0))
+        ttk.Checkbutton(meta, text="单次游玩只触发一次", variable=self.event_once).grid(row=2, column=3, columnspan=2, sticky="w", padx=4, pady=(7, 0))
+        ttk.Label(meta, text="缩放").grid(row=2, column=5, sticky="e", pady=(7, 0))
         zoom_box = ttk.Combobox(meta, textvariable=self.zoom, values=ZOOMS, state="readonly", width=6)
-        zoom_box.grid(row=1, column=6, sticky="w", pady=(7, 0))
+        zoom_box.grid(row=2, column=6, sticky="w", pady=(7, 0))
         zoom_box.bind("<<ComboboxSelected>>", lambda _event: self._draw_map())
-        ttk.Label(meta, text="点击地图可设置触发格").grid(row=1, column=7, sticky="e", pady=(7, 0))
+        ttk.Label(meta, text="点击地图可设置触发格").grid(row=2, column=7, sticky="e", pady=(7, 0))
         meta.columnconfigure(1, weight=1)
         meta.columnconfigure(3, weight=1)
 
@@ -227,7 +248,12 @@ class EventEditor(tk.Tk):
         form = ttk.LabelFrame(sequence_panel, text="当前步骤", padding=6)
         form.pack(fill="x", pady=(7, 0))
         ttk.Label(form, text="类型").grid(row=0, column=0, sticky="w")
-        type_box = ttk.Combobox(form, textvariable=self.step_type, values=("dialogue", "battle"), state="readonly", width=13)
+        type_box = ttk.Combobox(
+            form, textvariable=self.step_type,
+            values=("dialogue", "battle", "toast", "set_flag", "wait", "camera_pan",
+                    "camera_shake", "play_animation", "actor_move", "actor_visibility"),
+            state="readonly", width=16,
+        )
         type_box.grid(row=0, column=1, sticky="w")
         type_box.bind("<<ComboboxSelected>>", lambda _event: self._step_type_changed())
         ttk.Label(form, text="预载图").grid(row=1, column=0, sticky="w", pady=(5, 0))
@@ -237,15 +263,46 @@ class EventEditor(tk.Tk):
         ttk.Label(form, text="说话者").grid(row=2, column=0, sticky="w", pady=(5, 0))
         self.speaker_entry = ttk.Entry(form, textvariable=self.step_speaker)
         self.speaker_entry.grid(row=2, column=1, columnspan=3, sticky="ew", pady=(5, 0))
-        ttk.Label(form, text="对白内容").grid(row=3, column=0, sticky="nw", pady=(5, 0))
+        ttk.Label(form, text="文本内容").grid(row=3, column=0, sticky="nw", pady=(5, 0))
         self.text_editor = tk.Text(form, height=4, wrap="word", undo=True)
         self.text_editor.grid(row=3, column=1, columnspan=3, sticky="ew", pady=(5, 0))
         self.text_editor.bind("<KeyRelease>", lambda _event: self._restart_preview())
         ttk.Label(form, text="战斗 ID").grid(row=4, column=0, sticky="w", pady=(5, 0))
-        self.battle_entry = ttk.Entry(form, textvariable=self.battle_id)
+        self.battle_entry = ttk.Combobox(
+            form, textvariable=self.battle_id,
+            values=("placeholder", "grotle_tutorial", "zubat", "aron", "sableye"),
+        )
         self.battle_entry.grid(row=4, column=1, columnspan=3, sticky="ew", pady=(5, 0))
+        ttk.Label(form, text="标记/动画").grid(row=5, column=0, sticky="w", pady=(5, 0))
+        self.value_entry = ttk.Entry(form, textvariable=self.step_value)
+        self.value_entry.grid(row=5, column=1, columnspan=3, sticky="ew", pady=(5, 0))
+        ttk.Label(form, text="目标 X/Y").grid(row=6, column=0, sticky="w", pady=(5, 0))
+        position_row = ttk.Frame(form)
+        position_row.grid(row=6, column=1, columnspan=3, sticky="w", pady=(5, 0))
+        self.step_x_box = ttk.Spinbox(position_row, textvariable=self.step_x, from_=0, to=999, width=6)
+        self.step_x_box.pack(side="left")
+        self.step_y_box = ttk.Spinbox(position_row, textvariable=self.step_y, from_=0, to=999, width=6)
+        self.step_y_box.pack(side="left", padx=(5, 0))
+        ttk.Label(position_row, text="时长 ms").pack(side="left", padx=(12, 4))
+        self.duration_box = ttk.Spinbox(position_row, textvariable=self.step_duration, from_=0, to=60000, width=8)
+        self.duration_box.pack(side="left")
+        ttk.Label(form, text="角色/镜头").grid(row=7, column=0, sticky="w", pady=(5, 0))
+        options_row = ttk.Frame(form)
+        options_row.grid(row=7, column=1, columnspan=3, sticky="ew", pady=(5, 0))
+        self.actor_entry = ttk.Entry(options_row, textvariable=self.step_actor, width=13)
+        self.actor_entry.pack(side="left")
+        self.camera_box = ttk.Combobox(
+            options_row, textvariable=self.camera_target,
+            values=("position", "player"), state="readonly", width=10,
+        )
+        self.camera_box.pack(side="left", padx=5)
+        ttk.Label(options_row, text="震幅").pack(side="left", padx=(5, 2))
+        self.intensity_box = ttk.Spinbox(options_row, textvariable=self.step_intensity, from_=0, to=32, width=5)
+        self.intensity_box.pack(side="left")
+        self.visible_check = ttk.Checkbutton(options_row, text="可见", variable=self.step_visible)
+        self.visible_check.pack(side="left", padx=6)
         buttons = ttk.Frame(form)
-        buttons.grid(row=5, column=0, columnspan=4, sticky="e", pady=(7, 0))
+        buttons.grid(row=8, column=0, columnspan=4, sticky="e", pady=(7, 0))
         ttk.Button(buttons, text="新增步骤", command=self._add_step).pack(side="left", padx=3)
         ttk.Button(buttons, text="更新步骤", command=self._update_step).pack(side="left", padx=3)
         form.columnconfigure(1, weight=1)
@@ -269,7 +326,8 @@ class EventEditor(tk.Tk):
         for event in self.events:
             x, y = event["position"]
             battle = " [战]" if any(step["type"] == "battle" for step in event["steps"]) else ""
-            self.event_list.insert("end", f"{event['name']}  {event['map']} ({x},{y}){battle}")
+            trigger = event.get("trigger", "step")
+            self.event_list.insert("end", f"{event['name']}  [{trigger}] {event['map']} ({x},{y}){battle}")
 
     def _new_event(self):
         event_id = unique_event_id("new_event", (event["id"] for event in self.events))
@@ -277,10 +335,12 @@ class EventEditor(tk.Tk):
         self.events.append({
             "id": event_id,
             "name": "新事件",
+            "trigger": "step",
             "map": map_name,
             "position": [0, 0],
             "icon": self.icons[0] if self.icons else "",
             "once": True,
+            "conditions": {"all": [], "none": []},
             "steps": [],
         })
         self.dirty = True
@@ -321,6 +381,10 @@ class EventEditor(tk.Tk):
         self.event_y.set(event["position"][1])
         self.event_icon.set(event.get("icon", ""))
         self.event_once.set(event.get("once", True))
+        self.event_trigger.set(event.get("trigger", "step"))
+        conditions = event.get("conditions", {})
+        self.required_flags.set(", ".join(conditions.get("all", [])))
+        self.forbidden_flags.set(", ".join(conditions.get("none", [])))
         self.selected_step = None
         self._refresh_steps()
         self._draw_map()
@@ -338,14 +402,23 @@ class EventEditor(tk.Tk):
             x, y = self.events[index]["position"]
         updated = {
             "name": self.event_name.get().strip() or "未命名事件",
+            "trigger": self.event_trigger.get(),
             "map": map_name,
             "position": [x, y],
             "icon": self.event_icon.get(),
             "once": self.event_once.get(),
+            "conditions": {
+                "all": self._flags_from_text(self.required_flags.get()),
+                "none": self._flags_from_text(self.forbidden_flags.get()),
+            },
         }
         if any(self.events[index].get(key) != value for key, value in updated.items()):
             self.events[index].update(updated)
             self.dirty = True
+
+    @staticmethod
+    def _flags_from_text(value):
+        return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
 
     def _apply_event_form(self, notify=True):
         event = self._current_event()
@@ -452,12 +525,24 @@ class EventEditor(tk.Tk):
         if event is None:
             return
         for index, step in enumerate(event["steps"], 1):
-            if step["type"] == "battle":
+            step_type = step["type"]
+            if step_type == "battle":
                 label = f"{index}. 下一步：进入战斗 [{step.get('battle_id', 'placeholder')}]"
-            else:
+            elif step_type == "dialogue":
                 speaker = step.get("speaker") or "无署名"
                 text = step.get("text", "").replace("\n", " ")
                 label = f"{index}. 对话 {speaker}：{text[:22]}"
+            elif step_type in {"toast", "wait", "camera_shake"}:
+                detail = step.get("text", "") or f"{step.get('duration_ms', 0)} ms"
+                label = f"{index}. {step_type} {detail[:28]}"
+            elif step_type == "set_flag":
+                label = f"{index}. 设置标记 {step.get('flag')}={step.get('value', True)}"
+            elif step_type in {"camera_pan", "actor_move"}:
+                label = f"{index}. {step_type} -> {step.get('position')} ({step.get('duration_ms')} ms)"
+            elif step_type == "play_animation":
+                label = f"{index}. 动画 {step.get('animation')} @ {step.get('position')}"
+            else:
+                label = f"{index}. 角色可见性 {step.get('actor')}={step.get('visible')}"
             self.step_list.insert("end", label)
 
     def _select_step(self):
@@ -468,24 +553,78 @@ class EventEditor(tk.Tk):
         self.selected_step = selection[0]
         step = event["steps"][self.selected_step]
         self.step_type.set(step["type"])
+        self.text_editor.configure(state="normal")
+        self.text_editor.delete("1.0", "end")
+        self.step_value.set("")
+        self.step_x.set(step.get("position", [0, 0])[0])
+        self.step_y.set(step.get("position", [0, 0])[1])
+        self.step_duration.set(step.get("duration_ms", 800))
+        self.step_intensity.set(step.get("intensity", 6))
+        self.step_actor.set(step.get("actor", "event"))
+        self.step_visible.set(step.get("visible", True))
+        self.camera_target.set(step.get("target", "position"))
         if step["type"] == "dialogue":
             self.step_preload.set(step.get("preload", "no_portrait_bottom.png"))
             self.step_speaker.set(step.get("speaker", ""))
-            self.text_editor.configure(state="normal")
-            self.text_editor.delete("1.0", "end")
             self.text_editor.insert("1.0", step.get("text", ""))
-        else:
+        elif step["type"] == "battle":
             self.battle_id.set(step.get("battle_id", "placeholder"))
+        elif step["type"] == "toast":
+            self.text_editor.insert("1.0", step.get("text", ""))
+        elif step["type"] == "set_flag":
+            self.step_value.set(step.get("flag", ""))
+            self.step_visible.set(step.get("value", True))
+        elif step["type"] == "play_animation":
+            self.step_value.set(step.get("animation", "meteor"))
         self._step_type_changed()
         self._restart_preview()
 
     def _step_from_form(self) -> dict | None:
-        if self.step_type.get() == "battle":
+        step_type = self.step_type.get()
+        if step_type == "battle":
             return {"type": "battle", "battle_id": self.battle_id.get().strip() or "placeholder"}
+        if step_type == "set_flag":
+            flag = self.step_value.get().strip()
+            if not flag:
+                messagebox.showwarning("缺少标记", "请输入剧情标记名称。")
+                return None
+            return {"type": "set_flag", "flag": flag, "value": self.step_visible.get()}
+        if step_type == "wait":
+            return {"type": "wait", "duration_ms": self.step_duration.get()}
+        if step_type == "camera_pan":
+            return {
+                "type": "camera_pan", "target": self.camera_target.get(),
+                "position": [self.step_x.get(), self.step_y.get()],
+                "duration_ms": self.step_duration.get(),
+            }
+        if step_type == "camera_shake":
+            return {
+                "type": "camera_shake", "duration_ms": self.step_duration.get(),
+                "intensity": self.step_intensity.get(),
+            }
+        if step_type == "play_animation":
+            return {
+                "type": "play_animation", "animation": self.step_value.get().strip() or "meteor",
+                "position": [self.step_x.get(), self.step_y.get()],
+                "duration_ms": self.step_duration.get(),
+            }
+        if step_type == "actor_move":
+            return {
+                "type": "actor_move", "actor": self.step_actor.get().strip() or "event",
+                "position": [self.step_x.get(), self.step_y.get()],
+                "duration_ms": self.step_duration.get(),
+            }
+        if step_type == "actor_visibility":
+            return {
+                "type": "actor_visibility", "actor": self.step_actor.get().strip() or "event",
+                "visible": self.step_visible.get(),
+            }
         text = self.text_editor.get("1.0", "end-1c").strip()
         if not text:
-            messagebox.showwarning("缺少对白", "请先输入对白内容。")
+            messagebox.showwarning("缺少文本", "请先输入文本内容。")
             return None
+        if step_type == "toast":
+            return {"type": "toast", "text": text, "duration_ms": self.step_duration.get()}
         return {
             "type": "dialogue",
             "preload": self.step_preload.get(),
@@ -549,11 +688,25 @@ class EventEditor(tk.Tk):
         self.step_list.selection_set(target)
 
     def _step_type_changed(self):
-        dialogue = self.step_type.get() == "dialogue"
+        step_type = self.step_type.get()
+        dialogue = step_type == "dialogue"
+        text_enabled = step_type in {"dialogue", "toast"}
         self.preload_box.configure(state="readonly" if dialogue else "disabled")
         self.speaker_entry.configure(state="normal" if dialogue else "disabled")
-        self.text_editor.configure(state="normal" if dialogue else "disabled")
-        self.battle_entry.configure(state="disabled" if dialogue else "normal")
+        self.text_editor.configure(state="normal" if text_enabled else "disabled")
+        self.battle_entry.configure(state="readonly" if step_type == "battle" else "disabled")
+        self.value_entry.configure(state="normal" if step_type in {"set_flag", "play_animation"} else "disabled")
+        position_state = "normal" if step_type in {"camera_pan", "play_animation", "actor_move"} else "disabled"
+        self.step_x_box.configure(state=position_state)
+        self.step_y_box.configure(state=position_state)
+        self.duration_box.configure(
+            state="normal" if step_type in {"toast", "wait", "camera_pan", "camera_shake", "play_animation", "actor_move"}
+            else "disabled"
+        )
+        self.actor_entry.configure(state="normal" if step_type in {"actor_move", "actor_visibility"} else "disabled")
+        self.camera_box.configure(state="readonly" if step_type == "camera_pan" else "disabled")
+        self.intensity_box.configure(state="normal" if step_type == "camera_shake" else "disabled")
+        self.visible_check.configure(state="normal" if step_type in {"set_flag", "actor_visibility"} else "disabled")
         self._restart_preview()
 
     def _preload_changed(self):
@@ -588,7 +741,7 @@ class EventEditor(tk.Tk):
             draw.rounded_rectangle((72, 118, 408, 202), 8, fill=(14, 22, 25, 235), outline=(220, 190, 92, 255), width=2)
             text = f"下一步：进入战斗\nBattle ID: {self.battle_id.get() or 'placeholder'}"
             draw.multiline_text((96, 139), text, font=_font(16), fill=(250, 245, 220, 255), spacing=8)
-        else:
+        elif self.step_type.get() == "dialogue":
             image = self._preview_background()
             preload = PRELOAD_DIR / Path(self.step_preload.get()).name
             if preload.is_file():
@@ -596,14 +749,32 @@ class EventEditor(tk.Tk):
                     image = Image.alpha_composite(image, overlay.convert("RGBA"))
             speaker = self.step_speaker.get().strip()
             body = self.text_editor.get("1.0", "end-1c") if self.text_editor.cget("state") == "normal" else ""
-            full_text = f"{speaker}：{body}" if speaker else body
-            visible = full_text[: self.preview_chars]
+            visible_body = body[: self.preview_chars]
+            visible = f"{speaker}：{visible_body}" if speaker else visible_body
             center = self.step_preload.get() == "no_portrait_center.png"
             box = (82, 123, 398, 197) if center else (28, 241, 452, 294)
             self._draw_wrapped_text(image, visible, box, _font(14))
-            if self.preview_chars < len(full_text):
+            if self.preview_chars < len(body):
                 self.preview_chars += 1
                 self.preview_job = self.after(PREVIEW_INTERVAL_MS, self._draw_preview)
+        else:
+            image = self._preview_background()
+            draw = ImageDraw.Draw(image)
+            draw.rounded_rectangle(
+                (64, 112, 416, 208), 8,
+                fill=(14, 22, 25, 235), outline=(220, 190, 92, 255), width=2,
+            )
+            summary = {
+                "toast": f"提示框：{self.text_editor.get('1.0', 'end-1c')}",
+                "set_flag": f"设置剧情标记：{self.step_value.get()}",
+                "wait": f"等待 {self.step_duration.get()} ms",
+                "camera_pan": f"镜头平移到 {self.camera_target.get()}\n坐标 ({self.step_x.get()}, {self.step_y.get()})",
+                "camera_shake": f"镜头震动 {self.step_duration.get()} ms\n强度 {self.step_intensity.get()}",
+                "play_animation": f"播放 {self.step_value.get() or 'meteor'}\n坐标 ({self.step_x.get()}, {self.step_y.get()})",
+                "actor_move": f"移动 {self.step_actor.get()} 到\n({self.step_x.get()}, {self.step_y.get()})",
+                "actor_visibility": f"{self.step_actor.get()} 可见：{self.step_visible.get()}",
+            }.get(self.step_type.get(), self.step_type.get())
+            draw.multiline_text((84, 135), summary, font=_font(15), fill=(250, 245, 220, 255), spacing=8)
         self.preview_photo = ImageTk.PhotoImage(image)
         self.preview_canvas.delete("all")
         self.preview_canvas.create_image(0, 0, anchor="nw", image=self.preview_photo)
@@ -633,7 +804,7 @@ class EventEditor(tk.Tk):
     def _save(self):
         self._apply_event_form(notify=False)
         try:
-            self.document = save_event_document({"version": 1, "events": self.events})
+            self.document = save_event_document({"version": 2, "events": self.events})
         except OSError as exc:
             messagebox.showerror("保存失败", str(exc))
             return

@@ -1,9 +1,230 @@
 {
-  "version": 1,
+  "version": 2,
   "events": [
+    {
+      "id": "grotle_cave_gate",
+      "name": "完成树林龟训练前禁止进入矿洞",
+      "trigger": "warp_attempt",
+      "map": "world",
+      "position": [
+        41,
+        10
+      ],
+      "icon": "",
+      "once": false,
+      "conditions": {
+        "all": [],
+        "none": [
+          "grotle_training_complete"
+        ]
+      },
+      "steps": [
+        {
+          "type": "toast",
+          "text": "树林龟还在等着呢，先去找他吧！",
+          "duration_ms": 1800
+        },
+        {
+          "type": "actor_move",
+          "actor": "player",
+          "position": [
+            42,
+            10
+          ],
+          "duration_ms": 250
+        }
+      ]
+    },
+    {
+      "id": "grotle_training",
+      "name": "树林龟教学战与陨石降临",
+      "trigger": "step",
+      "map": "world",
+      "position": [
+        43,
+        31
+      ],
+      "icon": "GROTLE.png",
+      "once": true,
+      "conditions": {
+        "all": [],
+        "none": [
+          "grotle_training_complete"
+        ]
+      },
+      "steps": [
+        {
+          "type": "battle",
+          "battle_id": "grotle_tutorial"
+        },
+        {
+          "type": "set_flag",
+          "flag": "grotle_training_complete",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "你现在已经变得这么强了！今后我们也要多多切磋呀。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "不知不觉已经这么晚了，我要先走了，下次再见！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "嗯，再见！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "......"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "树林龟走后不久......"
+        },
+        {
+          "type": "actor_visibility",
+          "actor": "event",
+          "visible": false
+        },
+        {
+          "type": "camera_pan",
+          "target": "position",
+          "position": [
+            33,
+            5
+          ],
+          "duration_ms": 900
+        },
+        {
+          "type": "play_animation",
+          "animation": "meteor",
+          "position": [
+            33,
+            5
+          ],
+          "duration_ms": 1200
+        },
+        {
+          "type": "camera_shake",
+          "duration_ms": 420,
+          "intensity": 8
+        },
+        {
+          "type": "play_animation",
+          "animation": "dust",
+          "position": [
+            33,
+            5
+          ],
+          "duration_ms": 800
+        },
+        {
+          "type": "set_flag",
+          "flag": "meteor_landed",
+          "value": true
+        },
+        {
+          "type": "camera_pan",
+          "target": "player",
+          "position": [
+            0,
+            0
+          ],
+          "duration_ms": 900
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "陨石！？落在矿洞上方的平地上了？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "脑海深处，突然回荡起一阵空灵的声音。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "陌生的声音",
+          "text": "好冷……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "谁在说话！？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃重新看向悬崖。"
+        },
+        {
+          "type": "camera_pan",
+          "target": "position",
+          "position": [
+            33,
+            5
+          ],
+          "duration_ms": 600
+        },
+        {
+          "type": "wait",
+          "duration_ms": 500
+        },
+        {
+          "type": "camera_pan",
+          "target": "player",
+          "position": [
+            0,
+            0
+          ],
+          "duration_ms": 600
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（难道，是星星在说话……？）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃难掩内心的好奇，冒险的愿望在他心里渐渐膨胀。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "前往上方的矿洞，\n开启寻找星星的冒险吧！"
+        }
+      ]
+    },
     {
       "id": "new_event",
       "name": "jrc",
+      "trigger": "step",
       "map": "finalcave",
       "position": [
         7,
@@ -11,6 +232,10 @@
       ],
       "icon": "jirachi_sleep_3.png",
       "once": true,
+      "conditions": {
+        "all": [],
+        "none": []
+      },
       "steps": [
         {
           "type": "dialogue",
