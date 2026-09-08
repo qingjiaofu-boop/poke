@@ -64,7 +64,7 @@ python adventure.py COM3
 ## 当前原型
 
 - Essentials/绿宝石风格的序章地图与对话
-- Hades 风格事件对白：角色立绘卡片 + 旁侧文本框，文本可外部编辑
+- 地图剧情事件：宝可梦立绘预载图、逐字对白、事件图标、顺序步骤与战斗占位
 - 坚果哑铃主角显示
 - 流星坠入矿洞，好奇的坚果哑铃前去冒险寻找的完整剧情流程
 - 矿洞岩石阻挡；靠近后用 STC-B 震动传感器触发重磅冲撞并击碎岩石
@@ -72,6 +72,16 @@ python adventure.py COM3
 - 右上角地图坐标和传感器状态提示
 - 训练战斗页：日光束、光合作用、重磅冲撞的数值随传感器变化
 - STC-B 协议兼容：方向/确认指令 `0x01-0x05`，重开 `0x06`，导航键 3 切页 `0x08`，震动 `0x09`，光照/温度数据帧 `0x40/0x41`
+
+### 坚果哑铃独立战斗测试
+
+运行目前独立于主线的 480×320 战斗原型：
+
+```powershell
+python battle_demo.py
+```
+
+也可以双击 `run_battles.bat`。数字键 `1`、`2`、`3` 随时切换超音蝠、可可多拉和勾魂眼；方向键选择技能，`Enter` 或空格确认普通技能，勾魂眼战的“重磅冲撞”必须选中后按 `Z` 触发，`R` 重开，`Esc` 退出。`Z` 与预留的 STC-B 振动串口命令 `0x09` 共用同一处理入口。窗口默认以 2 倍整数倍显示；调整窗口时仍保持整数倍最近邻缩放。三场测试分别按照 `assets/resource/battle/battle_with_zubat.txt`、`battle_with_aron.txt` 和 `battle_with_sableye.txt` 使用固定 HP、伤害与回复量，不显示等级、经验值或 PP。可用 `--seed 17` 固定敌方随机选招、用 `--encounter aron` 指定初始战斗，或用 `--mute` 静音运行。
 
 ## 数据驱动战斗框架
 
@@ -104,7 +114,9 @@ python tools/map_editor.py friend     # 编辑青梅空地
 python tools/map_editor.py route      # 编辑 1 号道路
 ```
 
-快捷键：`1/2/3` 切换三层，`4` 切换游戏最终画面预览，`C` 切换当前层碰撞标记模式，`P` 设置出生点，左键绘制、右键擦除，`←/→` 翻图块页，`G` 输入页码后直接跳转图块页，`T` 切换图块集，`O` 打开已有地图，`E` 扩充/调整地图尺寸，`W/A/S/D`（或滚轮）平移画布，`Ctrl+S` 保存。也可以点击左侧的“跳转图块页 [G]”或“保存地图 [Ctrl+S]”按钮。保存后会更新 `assets/maps/*_lower.png`、`*_current.png`、`*_upper.png` 和 `outdoor_maps.json`，游戏下次启动自动读取。
+快捷键：`1/2/3` 切换三层，`4` 切换游戏最终画面预览，`C` 切换当前层碰撞标记模式，`P` 设置出生点，左键绘制、右键擦除，`←/→` 翻图块页，`G` 输入页码后直接跳转图块页，`T` 切换图块集，`O` 打开已有地图，`E` 扩充/调整地图尺寸，`F5` 重新加载事件标记，`W/A/S/D`（或滚轮）平移画布，`Ctrl+S` 保存。也可以点击左侧的“跳转图块页 [G]”或“保存地图 [Ctrl+S]”按钮。保存后会更新 `assets/maps/*_lower.png`、`*_current.png`、`*_upper.png` 和 `outdoor_maps.json`，游戏下次启动自动读取。
+
+地图画布会额外显示 `assets/map_events.json` 中的事件：青色框表示事件触发格，红色 `B` 表示该事件序列中包含战斗步骤。事件图标只是编辑器与游戏运行时叠加层，不会被烘焙进 lower/current/upper 三层 PNG。
 
 按 `O` 或点击“打开已有地图 [O]”会弹出 `outdoor_maps.json` 里已有的地图列表（也会扫描 `assets/maps/*_lower.png`），用 `↑/↓`（或 `PgUp/PgDn`、滚轮）选择、`Enter` 打开；打开前会自动保存当前地图的未保存修改。
 
@@ -119,6 +131,7 @@ python tools/map_editor.py route      # 编辑 1 号道路
 ## 回归测试
 
 ```powershell
+python test_event_system.py
 python test_adventure.py
 ```
 
@@ -151,15 +164,42 @@ python test_adventure.py
 
 ## 剧情事件编辑器
 
-对白存放在 `assets/story_events.json`，程序启动时自动读取；每条记录包含
-`speaker` 和 `text`，例如 `{"speaker":"父亲","text":"去左边的森林空地。"}`。
-不想手动编辑 JSON 时，可运行：
+地图剧情统一存放在 `assets/map_events.json`。运行以下命令打开可视化编辑器：
 
 ```powershell
 python tools/event_editor.py
 ```
 
-在窗口中选择 `father`（父亲事件）或 `friend`（青梅事件），新增、更新、删除对白后点击“保存 JSON”。重新启动游戏即可看到新的立绘对白。当前立绘使用 `introOak.png`、`introMarill.png` 和坚果哑铃素材；没有对应立绘时仍会正常显示文本框。
+编辑流程：新建事件，选择地图，在地图画布上点击触发格，再选择一个事件图标。随后按播放顺序添加任意数量的“对白”或“战斗”步骤。对白步骤可选择 `assets/resource/dialogue/preloads` 中的宝可梦预载图、输入说话者与多行文本，右下角会以 480×320 实际逻辑分辨率循环预览文字渐入。事件图标来自 `assets/resource/event/icon`；宽图会取第一帧、裁去透明边缘，再以最近邻方式放入 32×32 格。
+
+保存后重新启动游戏读取新事件。主角走入事件格时会自动开始事件；对白期间背景保持为当时的地图或战斗画面，并由预载图淡化。按一次 `Enter`（未来对应 STC-B 中心键）时，如果文字仍在渐入，会立即显示完整文字；文字已经完整时，再按一次进入下一步骤。`once` 开启的事件在一次运行中只触发一次，按 `R` 重置流程后可再次触发。
+
+战斗步骤目前按 `battle_id` 保存，但统一调用现有训练战作为占位。战斗胜利后继续执行下一事件步骤；紧随战斗步骤的对白会保留战斗结束画面作为淡化背景，对白结束后才返回地图。战斗失败后按 `Enter` 会回到原触发地图和坐标，并从事件第一个步骤重新开始。以后接入正式战斗配置时，可用 `battle_id` 创建对应敌人与战场，而无需修改已有事件文件。
+
+事件文件示例：
+
+```json
+{
+  "version": 1,
+  "events": [
+    {
+      "id": "jirachi_meeting",
+      "name": "遇见基拉祈",
+      "map": "finalcave",
+      "position": [7, 4],
+      "icon": "jirachi_sleep_1.png",
+      "once": true,
+      "steps": [
+        {"type": "dialogue", "preload": "jirachi_right.png", "speaker": "基拉祈", "text": "你终于来了。"},
+        {"type": "battle", "battle_id": "placeholder"},
+        {"type": "dialogue", "preload": "no_portrait_center.png", "speaker": "", "text": "洞穴恢复了平静。"}
+      ]
+    }
+  ]
+}
+```
+
+原有 `assets/story_events.json` 的父亲/青梅确认键事件和 `assets/step_events.json` 的旧踩格对白仍然兼容，便于逐步迁移。
 
 普通 NPC 事件与 RPG Maker 的行为一致：NPC 自己所在的一格不可通行，主角必须走到相邻格、**面向 NPC** 后按 `Enter`（开发板中心键）才会触发对话。父亲使用独立的 `FERROTHORN_STC.png` 四方向角色图，和主控的 `FERROTHORN_USER.png` 区分开。
 

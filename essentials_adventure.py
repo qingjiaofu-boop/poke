@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pygame
 
+from event_system import ICON_DIR, PRELOAD_DIR, event_index, load_event_document
+
 try:
     import serial
 except ImportError:
@@ -38,6 +40,7 @@ MOVE_FRAMES = 4
 FIELD_ATTACK_WINDUP_FRAMES = 6
 ROCK_FRAME_HOLD = 1
 WARP_FADE_FRAMES = 12
+DIALOGUE_CHAR_FRAMES = 2
 LAYER_NAMES = ("lower", "current", "upper")
 
 WARP_LINKS = (
@@ -189,6 +192,8 @@ class Game:
         # while the renderer can select a matching large portrait.
         self.dialogue_portraits = {}
         self.dialogue_reveal = 0
+        self.dialogue_reveal_tick = 0
+        self.dialogue_preload: str | None = None
         self.toast = ""
         self.toast_until = 0.0
         self.meteor_phase = 0
@@ -210,6 +215,16 @@ class Game:
         self.story_events = self._load_story_events()
         self.step_events = self._load_step_events()
         self.triggered_step_events: set[tuple[str, str]] = set()
+        self.map_event_document = load_event_document()
+        self.map_events = self.map_event_document["events"]
+        self.map_event_index = event_index(self.map_events)
+        self.completed_map_events: set[str] = set()
+        self.active_map_event: dict | None = None
+        self.active_map_event_step = 0
+        self.map_event_origin: dict | None = None
+        self.event_battle_active = False
+        self.map_event_icon_cache: dict[str, pygame.Surface | None] = {}
+        self.dialogue_preload_cache: dict[str, pygame.Surface | None] = {}
         self.pos[:] = self.scene_start("home")
         world = self.tile_maps.get("world")
         if world:
@@ -644,6 +659,7 @@ class Game:
             self.update_field_attack()
             self.update_warp_fade()
             self.update_battle_effect()
+            self.update_dialogue_reveal()
             self.draw()
         self.serial.close()
         pygame.quit()
@@ -657,8 +673,15 @@ class Game:
                     self.running = False
                 elif self.step or self.field_attack or self.warp_fade_frames:
                     continue
+                elif event.key == pygame.K_r:
+                    self.reset()
+                elif self.dialogue:
+                    if event.key == pygame.K_RETURN:
+                        self.command(5)
+                    continue
                 elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5,
-                                    pygame.K_KP1, pygame.K_KP2, pygame.K_KP3, pygame.K_KP4, pygame.K_KP5):
+                                    pygame.K_KP1, pygame.K_KP2, pygame.K_KP3, pygame.K_KP4, pygame.K_KP5) \
+                        and self.scene != "battle" and self.active_map_event is None:
                     number_keys = {
                         pygame.K_1: 0, pygame.K_KP1: 0,
                         pygame.K_2: 1, pygame.K_KP2: 1,
@@ -667,8 +690,6 @@ class Game:
                         pygame.K_5: 4, pygame.K_KP5: 4,
                     }
                     self.switch_map_view(number_keys[event.key])
-                elif event.key == pygame.K_r:
-                    self.reset()
                 elif event.key == pygame.K_v:
                     self.vibration_count += 1
                     self.vibration()
@@ -719,9 +740,20 @@ class Game:
         if command == 6:
             self.reset()
             return
+        if self.dialogue:
+            if command == 5:
+                text = self.dialogue[self.dialogue_index]
+                if self.dialogue_reveal < len(text):
+                    self.dialogue_reveal = len(text)
+                else:
+                    self.advance_dialogue()
+            elif command == 7 and self.active_map_event is None:
+                self.dialogue = []
+                self.dialogue_source = None
+                self.dialogue_preload = None
+            return
         if command == 7:
             self.show_toast("K2：取消当前对白/操作", 1.5)
-            self.dialogue = []
             return
         if command == 8:
             self.cycle_scene()
@@ -730,19 +762,12 @@ class Game:
             self.vibration_count += 1
             self.vibration()
             return
-        if self.map_view:
-            if command in (1, 2, 3, 4):
-                self.move_map_view(command)
-            return
         if self.scene == "battle":
             self.battle_command(command)
             return
-        if self.dialogue:
-            if command == 5:
-                self.dialogue_index += 1
-                if self.dialogue_index >= len(self.dialogue):
-                    self.dialogue = []
-                    self.after_dialogue()
+        if self.map_view:
+            if command in (1, 2, 3, 4):
+                self.move_map_view(command)
             return
         if command in (1, 2, 3, 4):
             self.move(command)
@@ -906,7 +931,8 @@ class Game:
             self.step["position"][:] = self.step["to"]
             self.step = None
             self.trigger_warp()
-            self.trigger_step_event()
+            if not self.trigger_map_event():
+                self.trigger_step_event()
 
     def is_npc_tile(self, scene, point):
         """NPCs occupy a solid tile in normal scenes, like RPG Maker events."""
@@ -930,6 +956,98 @@ class Game:
         self.dialogue = list(lines)
         self.dialogue_index = 0
         self.dialogue_source = "step"
+        self.dialogue_preload = None
+        self.dialogue_reveal = 0
+        self.dialogue_reveal_tick = 0
+
+    def trigger_map_event(self):
+        """Start the ordered event placed on the tile the player just entered."""
+        map_name = self.map_view or self.scene
+        position = tuple(self.map_view_pos if self.map_view else self.pos)
+        event = self.map_event_index.get((map_name, position))
+        if event is None or self.active_map_event is not None:
+            return False
+        if event.get("once", True) and event["id"] in self.completed_map_events:
+            return False
+        self.active_map_event = event
+        self.active_map_event_step = 0
+        self.map_event_origin = {
+            "map_view": self.map_view,
+            "scene": self.scene,
+            "map_position": tuple(self.map_view_pos),
+            "scene_position": tuple(self.pos),
+            "facing": self.facing,
+        }
+        self.event_battle_active = False
+        self.run_map_event_step()
+        return True
+
+    def run_map_event_step(self):
+        """Execute steps until one needs player input, or finish the event."""
+        event = self.active_map_event
+        if event is None:
+            return
+        steps = event.get("steps", [])
+        if self.active_map_event_step >= len(steps):
+            if event.get("once", True):
+                self.completed_map_events.add(event["id"])
+            self.restore_map_event_origin()
+            self.active_map_event = None
+            self.active_map_event_step = 0
+            self.map_event_origin = None
+            self.event_battle_active = False
+            self.dialogue = []
+            self.dialogue_source = None
+            self.dialogue_preload = None
+            self.battle_won = False
+            self.battle_lost = False
+            self.battle_effect = None
+            return
+
+        step = steps[self.active_map_event_step]
+        if step.get("type") == "battle":
+            self.start_event_battle(step.get("battle_id", "placeholder"))
+            return
+
+        speaker = str(step.get("speaker", "")).strip()
+        message = str(step.get("text", ""))
+        self.dialogue = [f"{speaker}：{message}" if speaker else message]
+        self.dialogue_index = 0
+        self.dialogue_source = "map_event"
+        self.dialogue_preload = str(step.get("preload", "no_portrait_bottom.png"))
+        self.dialogue_reveal = 0
+        self.dialogue_reveal_tick = 0
+
+    def advance_dialogue(self):
+        """Advance legacy dialogue or return control to the ordered event."""
+        if self.dialogue_index + 1 < len(self.dialogue):
+            self.dialogue_index += 1
+            self.dialogue_reveal = 0
+            self.dialogue_reveal_tick = 0
+            return
+        source = self.dialogue_source
+        self.dialogue = []
+        self.dialogue_index = 0
+        self.dialogue_source = None
+        self.dialogue_preload = None
+        self.dialogue_reveal = 0
+        self.dialogue_reveal_tick = 0
+        if source == "map_event" and self.active_map_event is not None:
+            self.active_map_event_step += 1
+            self.run_map_event_step()
+        else:
+            self.after_dialogue()
+
+    def update_dialogue_reveal(self):
+        if not self.dialogue:
+            return
+        text = self.dialogue[self.dialogue_index]
+        if self.dialogue_reveal >= len(text):
+            return
+        self.dialogue_reveal_tick += 1
+        if self.dialogue_reveal_tick >= DIALOGUE_CHAR_FRAMES:
+            self.dialogue_reveal += 1
+            self.dialogue_reveal_tick = 0
 
     def actor_grid_position(self, position):
         if not self.step or self.step["context"] != self._movement_context():
@@ -978,11 +1096,17 @@ class Game:
             self.dialogue = list(self.story_events["father"])
             self.dialogue_index = 0
             self.dialogue_source = "father"
+            self.dialogue_preload = None
+            self.dialogue_reveal = 0
+            self.dialogue_reveal_tick = 0
             self.father_done = True
         elif self.scene == "friend" and not self.friend_met:
             self.dialogue = list(self.story_events["friend"])
             self.dialogue_index = 0
             self.dialogue_source = "friend"
+            self.dialogue_preload = None
+            self.dialogue_reveal = 0
+            self.dialogue_reveal_tick = 0
             self.friend_met = True
         elif self.scene == "friend" and self.friend_met and not self.battle_won:
             self.start_battle()
@@ -1006,24 +1130,72 @@ class Game:
         self.player_hp, self.enemy_hp = 100, 100
         self.move_cursor = 0
         self.heavy_ready = False
+        self.battle_won = False
         self.battle_lost = False
         self.battle_effect = None
         self.set_battle_notice("青梅派出了种子铁球！", 2.4)
+
+    def start_event_battle(self, battle_id):
+        """Run the existing training battle as the current battle placeholder."""
+        self.event_battle_active = True
+        self.dialogue = []
+        self.dialogue_source = None
+        self.dialogue_preload = None
+        self.map_view = None
+        self.start_battle()
+        self.set_battle_notice(f"事件战斗 [{battle_id}]：当前使用训练战占位。", 2.4)
+
+    def restore_map_event_origin(self):
+        origin = self.map_event_origin
+        if origin is None:
+            return
+        self.scene = origin["scene"]
+        self.map_view = origin["map_view"]
+        self.map_view_pos[:] = origin["map_position"]
+        self.pos[:] = origin["scene_position"]
+        self.facing = origin["facing"]
+        self.step = None
+        self.field_attack = None
+        self.warp_fade_frames = 0
+        if hasattr(self, "_map_camera"):
+            del self._map_camera
+
+    def finish_event_battle(self):
+        self.event_battle_active = False
+        self.battle_lost = False
+        self.battle_effect = None
+        self.active_map_event_step += 1
+        self.run_map_event_step()
+
+    def restart_map_event_after_defeat(self):
+        self.restore_map_event_origin()
+        self.event_battle_active = False
+        self.battle_won = False
+        self.battle_lost = False
+        self.battle_effect = None
+        self.active_map_event_step = 0
+        self.run_map_event_step()
 
     def battle_command(self, command):
         if self.battle_effect:
             return
         if self.battle_won:
             if command == 5:
-                self.step = None
-                self.scene = "route"
-                self.pos[:] = self.scene_start("route")
-                self.meteor_phase = 1
-                self.show_toast("训练结束。青梅：流星坠向北方的山洞！", 3)
+                if self.event_battle_active:
+                    self.finish_event_battle()
+                else:
+                    self.step = None
+                    self.scene = "route"
+                    self.pos[:] = self.scene_start("route")
+                    self.meteor_phase = 1
+                    self.show_toast("训练结束。青梅：流星坠向北方的山洞！", 3)
             return
         if self.battle_lost:
             if command == 5:
-                self.start_battle()
+                if self.event_battle_active:
+                    self.restart_map_event_after_defeat()
+                else:
+                    self.start_battle()
             return
         if command in (3, 4):
             self.move_cursor = (self.move_cursor + (1 if command == 4 else -1)) % 4
@@ -1124,7 +1296,15 @@ class Game:
         self.dialogue = []
         self.dialogue_index = 0
         self.dialogue_source = None
+        self.dialogue_preload = None
+        self.dialogue_reveal = 0
+        self.dialogue_reveal_tick = 0
         self.triggered_step_events.clear()
+        self.completed_map_events.clear()
+        self.active_map_event = None
+        self.active_map_event_step = 0
+        self.map_event_origin = None
+        self.event_battle_active = False
         self.meteor_phase = 0
         self.player_hp, self.enemy_hp = 100, 100
         self.show_toast("回到父亲的家。靠近左上角父亲并按 Enter。", 3)
@@ -1144,7 +1324,11 @@ class Game:
         if self.map_view or self.scene not in ("battle", "ending"):
             self.draw_status_badge()
         if self.dialogue:
-            self.draw_dialogue(self.dialogue[self.dialogue_index])
+            text = self.dialogue[self.dialogue_index][:self.dialogue_reveal]
+            if self.dialogue_preload:
+                self.draw_preloaded_dialogue(text, self.dialogue_preload)
+            else:
+                self.draw_dialogue(text)
         elif self.toast and time.monotonic() < self.toast_until:
             self.draw_toast(self.toast)
         self.draw_warp_fade()
@@ -1159,6 +1343,7 @@ class Game:
         self.screen.fill((20, 24, 22), (0, 0, PLAY_W, PLAY_H))
         self.draw_tile_layer(tile_map, "lower", camera_x, camera_y, origin_x, origin_y)
         self.draw_tile_layer(tile_map, "current", camera_x, camera_y, origin_x, origin_y)
+        self.draw_map_event_icons(tile_map, camera_x, camera_y, origin_x, origin_y)
         actor_x = origin_x + (actor_pos[0] + 0.5) * TILE_SIZE - camera_x
         actor_y = origin_y + (actor_pos[1] + 0.5) * TILE_SIZE - camera_y
         self.draw_actor(actor_x, actor_y)
@@ -1198,6 +1383,54 @@ class Game:
                      origin_y + y * TILE_SIZE - camera_y),
                 )
 
+    def load_map_event_icon(self, name):
+        name = Path(str(name)).name
+        if not name:
+            return None
+        if name in self.map_event_icon_cache:
+            return self.map_event_icon_cache[name]
+        path = ICON_DIR / name
+        try:
+            source = pygame.image.load(str(path)).convert_alpha()
+        except (pygame.error, FileNotFoundError):
+            self.map_event_icon_cache[name] = None
+            return None
+        if source.get_width() >= source.get_height() * 2:
+            source = source.subsurface((0, 0, source.get_height(), source.get_height())).copy()
+        bounds = source.get_bounding_rect(min_alpha=1)
+        if not bounds.width or not bounds.height:
+            self.map_event_icon_cache[name] = None
+            return None
+        source = source.subsurface(bounds).copy()
+        scale = min(28 / source.get_width(), 28 / source.get_height())
+        source = pygame.transform.scale(
+            source,
+            (max(1, round(source.get_width() * scale)),
+             max(1, round(source.get_height() * scale))),
+        )
+        icon = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+        icon.blit(source, ((TILE_SIZE - source.get_width()) // 2,
+                           TILE_SIZE - source.get_height() - 2))
+        self.map_event_icon_cache[name] = icon
+        return icon
+
+    def draw_map_event_icons(self, tile_map, camera_x, camera_y, origin_x=0, origin_y=0):
+        for event in self.map_events:
+            if event.get("map") != tile_map.name:
+                continue
+            if event.get("once", True) and event["id"] in self.completed_map_events:
+                continue
+            x, y = event["position"]
+            if not (0 <= x < tile_map.width and 0 <= y < tile_map.height):
+                continue
+            icon = self.load_map_event_icon(event.get("icon", ""))
+            if icon:
+                self.screen.blit(
+                    icon,
+                    (origin_x + x * TILE_SIZE - camera_x,
+                     origin_y + y * TILE_SIZE - camera_y),
+                )
+
     def draw_map(self):
         bg = self.backgrounds.get(self.scene)
         outdoor = self.outdoor_maps.get(self.scene)
@@ -1219,6 +1452,8 @@ class Game:
         else:
             self.map_rect = pygame.Rect(0, 0, PLAY_W, HEIGHT)
             self.screen.fill((46, 91, 58), (0, 0, PLAY_W, HEIGHT))
+        if outdoor and self.scene in self.tile_maps:
+            self.draw_map_event_icons(self.tile_maps[self.scene], *self._map_camera)
         if self.scene == "home":
             self.draw_npc_at("home", self.father_frames, "父亲")
         elif self.scene == "friend":
@@ -1502,6 +1737,43 @@ class Game:
         hint = self.small.render("Enter / 开发板中心键 继续", True, (180, 205, 177))
         self.screen.blit(hint, (panel.right - hint.get_width() - 10, panel.bottom - hint.get_height() - 7))
 
+    def load_dialogue_preload(self, name):
+        name = Path(str(name)).name
+        if name in self.dialogue_preload_cache:
+            return self.dialogue_preload_cache[name]
+        path = PRELOAD_DIR / name
+        try:
+            image = pygame.image.load(str(path)).convert_alpha()
+            if image.get_size() != (WIDTH, HEIGHT):
+                image = pygame.transform.scale(image, (WIDTH, HEIGHT))
+        except (pygame.error, FileNotFoundError):
+            image = None
+        self.dialogue_preload_cache[name] = image
+        return image
+
+    def draw_preloaded_dialogue(self, text, preload_name):
+        """Composite a prepared portrait/dialogue overlay over the live scene."""
+        overlay = self.load_dialogue_preload(preload_name)
+        if overlay is None:
+            self.draw_dialogue(text)
+            return
+        self.screen.blit(overlay, (0, 0))
+        center_box = Path(preload_name).name == "no_portrait_center.png"
+        if center_box:
+            x, y, width, height = 82, 123, 316, 74
+        else:
+            x, y, width, height = 28, 241, 424, 53
+        self.draw_multiline(x, y, text, self.font, (38, 48, 54), width, height)
+        full = self.dialogue[self.dialogue_index] if self.dialogue else ""
+        if self.dialogue_reveal >= len(full):
+            tip_x = 386 if center_box else 440
+            tip_y = 184 if center_box else 282
+            pygame.draw.polygon(
+                self.screen,
+                (52, 66, 70),
+                ((tip_x, tip_y), (tip_x + 7, tip_y), (tip_x + 3, tip_y + 5)),
+            )
+
     @staticmethod
     def _split_dialogue(text):
         separator = "：" if "：" in text else (":" if ":" in text else None)
@@ -1516,7 +1788,7 @@ class Game:
         pygame.draw.rect(self.screen, (212, 185, 101), box, 1, border_radius=3)
         self.screen.blit(self.small.render(text, True, (249, 238, 181)), (box.x + 8, box.y + 7))
 
-    def draw_multiline(self, x, y, text, font, color, max_width):
+    def draw_multiline(self, x, y, text, font, color, max_width, max_height=None):
         line, lines = "", []
         for paragraph in text.split("\n"):
             for char in paragraph:
@@ -1526,8 +1798,11 @@ class Game:
                 line += char
             lines.append(line)
             line = ""
+        line_height = font.get_height() + 3
         for i, value in enumerate(lines):
-            self.screen.blit(font.render(value, True, color), (x, y + i * (font.get_height() + 3)))
+            if max_height is not None and (i + 1) * line_height > max_height:
+                break
+            self.screen.blit(font.render(value, True, color), (x, y + i * line_height))
 
 
 if __name__ == "__main__":
