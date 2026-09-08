@@ -132,6 +132,7 @@ python tools/map_editor.py route      # 编辑 1 号道路
 
 ```powershell
 python test_event_system.py
+python test_scripted_battle.py
 python test_adventure.py
 ```
 
@@ -170,25 +171,27 @@ python test_adventure.py
 python tools/event_editor.py
 ```
 
-编辑流程：新建事件，选择地图，在地图画布上点击触发格，再选择一个事件图标。随后按播放顺序添加任意数量的“对白”或“战斗”步骤。对白步骤可选择 `assets/resource/dialogue/preloads` 中的宝可梦预载图、输入说话者与多行文本，右下角会以 480×320 实际逻辑分辨率循环预览文字渐入。事件图标来自 `assets/resource/event/icon`；宽图会取第一帧、裁去透明边缘，再以最近邻方式放入 32×32 格。
+编辑流程：新建事件，选择地图和触发方式，再在地图画布上点击触发格。`step` 会在踩格时触发，`game_start` 在游戏启动后触发，`warp_attempt` 在玩家试图进入对应传送格时抢先触发。事件可设置“必须标记”和“禁止标记”，多个标记用英文逗号分隔。随后按播放顺序加入对白、战斗、提示框、剧情标记、等待、镜头平移/震动、动画、角色移动或显隐步骤。对白仍可选择 `assets/resource/dialogue/preloads` 中的预载图，并在右下角以 480×320 逻辑分辨率预览文字渐入。
 
 保存后重新启动游戏读取新事件。主角走入事件格时会自动开始事件；对白期间背景保持为当时的地图或战斗画面，并由预载图淡化。按一次 `Enter`（未来对应 STC-B 中心键）时，如果文字仍在渐入，会立即显示完整文字；文字已经完整时，再按一次进入下一步骤。`once` 开启的事件在一次运行中只触发一次，按 `R` 重置流程后可再次触发。
 
-战斗步骤目前按 `battle_id` 保存，但统一调用现有训练战作为占位。战斗胜利后继续执行下一事件步骤；紧随战斗步骤的对白会保留战斗结束画面作为淡化背景，对白结束后才返回地图。战斗失败后按 `Enter` 会回到原触发地图和坐标，并从事件第一个步骤重新开始。以后接入正式战斗配置时，可用 `battle_id` 创建对应敌人与战场，而无需修改已有事件文件。
+战斗步骤的 `battle_id` 设为 `grotle_tutorial` 时会进入树林龟脚本化教学战；其他尚未接入的 ID 继续使用训练战占位。树林龟战与超音蝠、可可多拉、勾魂眼测试共用 `ui_gen3_2x` 状态框、血条、消息框、技能面板、光标和 160x160 精灵布局。教学战依次演示敌方日光束、强制玩家使用日光束、解锁并强制使用光合作用，之后才开放自由战斗。日光束随光照造成 34-55 点伤害，光合作用回复 40-60 点体力，树林龟的日光束固定造成 33 点伤害。胜利后回到进战前的地图状态并继续下一事件步骤；失败后按 `Enter` 回到事件最初触发点，并从第一步重来。
 
 事件文件示例：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "events": [
     {
       "id": "jirachi_meeting",
       "name": "遇见基拉祈",
+      "trigger": "step",
       "map": "finalcave",
       "position": [7, 4],
       "icon": "jirachi_sleep_1.png",
       "once": true,
+      "conditions": {"all": ["meteor_landed"], "none": []},
       "steps": [
         {"type": "dialogue", "preload": "jirachi_right.png", "speaker": "基拉祈", "text": "你终于来了。"},
         {"type": "battle", "battle_id": "placeholder"},
@@ -198,6 +201,21 @@ python tools/event_editor.py
   ]
 }
 ```
+
+陨石过场不需要移动玩家。先将镜头关注点从玩家格平滑移动到悬崖格，在同一个地图格播放陨石、震动和烟尘，最后将镜头关注点平滑交还玩家：
+
+```json
+[
+  {"type": "camera_pan", "target": "position", "position": [33, 5], "duration_ms": 800},
+  {"type": "play_animation", "animation": "meteor", "position": [33, 5], "duration_ms": 1200},
+  {"type": "camera_shake", "duration_ms": 420, "intensity": 8},
+  {"type": "play_animation", "animation": "dust", "position": [33, 5], "duration_ms": 800},
+  {"type": "set_flag", "flag": "meteor_landed", "value": true},
+  {"type": "camera_pan", "target": "player", "position": [0, 0], "duration_ms": 800}
+]
+```
+
+当前悬崖落点为世界坐标 `(33, 5)`。`meteor` 使用 `assets/resource/Meteor/Meteor1.png` 至 `Meteor3.png`，`dust` 使用 `assets/resource/map/effects/dust_and_grass.png`。所有步骤都由主循环逐帧推进，不会用阻塞等待卡住窗口。
 
 原有 `assets/story_events.json` 的父亲/青梅确认键事件和 `assets/step_events.json` 的旧踩格对白仍然兼容，便于逐步迁移。
 

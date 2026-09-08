@@ -15,8 +15,20 @@ WORLD_PATH = ASSETS / "maps" / "world_connections.json"
 PRELOAD_DIR = ASSETS / "resource" / "dialogue" / "preloads"
 ICON_DIR = ASSETS / "resource" / "event" / "icon"
 
-EVENT_VERSION = 1
-STEP_TYPES = frozenset({"dialogue", "battle"})
+EVENT_VERSION = 2
+TRIGGER_TYPES = frozenset({"step", "game_start", "warp_attempt"})
+STEP_TYPES = frozenset({
+    "dialogue",
+    "battle",
+    "toast",
+    "set_flag",
+    "wait",
+    "camera_pan",
+    "camera_shake",
+    "play_animation",
+    "actor_move",
+    "actor_visibility",
+})
 
 
 def _slug(value: str) -> str:
@@ -35,6 +47,35 @@ def unique_event_id(name: str, existing: Iterable[str]) -> str:
     return candidate
 
 
+def _position(raw: object) -> list[int]:
+    try:
+        x, y = int(raw[0]), int(raw[1])
+    except (IndexError, TypeError, ValueError):
+        x, y = 0, 0
+    return [max(0, x), max(0, y)]
+
+
+def _duration(raw: object, default: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(0, min(60_000, value))
+
+
+def _flag_list(raw: object) -> list[str]:
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    result = []
+    for value in raw:
+        flag = _slug(str(value))
+        if flag != "event" and flag not in result:
+            result.append(flag)
+    return result
+
+
 def normalize_step(raw: object) -> dict | None:
     if not isinstance(raw, dict):
         return None
@@ -45,6 +86,61 @@ def normalize_step(raw: object) -> dict | None:
         return {
             "type": "battle",
             "battle_id": str(raw.get("battle_id", "placeholder")).strip() or "placeholder",
+        }
+    if step_type == "toast":
+        return {
+            "type": "toast",
+            "text": str(raw.get("text", "")).strip(),
+            "duration_ms": _duration(raw.get("duration_ms"), 1800),
+        }
+    if step_type == "set_flag":
+        return {
+            "type": "set_flag",
+            "flag": _slug(str(raw.get("flag", "story_flag"))),
+            "value": bool(raw.get("value", True)),
+        }
+    if step_type == "wait":
+        return {
+            "type": "wait",
+            "duration_ms": _duration(raw.get("duration_ms"), 500),
+        }
+    if step_type == "camera_pan":
+        target = str(raw.get("target", "position")).strip().lower()
+        return {
+            "type": "camera_pan",
+            "target": "player" if target == "player" else "position",
+            "position": _position(raw.get("position", [0, 0])),
+            "duration_ms": _duration(raw.get("duration_ms"), 800),
+        }
+    if step_type == "camera_shake":
+        try:
+            intensity = int(raw.get("intensity", 6))
+        except (TypeError, ValueError):
+            intensity = 6
+        return {
+            "type": "camera_shake",
+            "duration_ms": _duration(raw.get("duration_ms"), 420),
+            "intensity": max(0, min(32, intensity)),
+        }
+    if step_type == "play_animation":
+        return {
+            "type": "play_animation",
+            "animation": _slug(str(raw.get("animation", "meteor"))),
+            "position": _position(raw.get("position", [0, 0])),
+            "duration_ms": _duration(raw.get("duration_ms"), 1000),
+        }
+    if step_type == "actor_move":
+        return {
+            "type": "actor_move",
+            "actor": _slug(str(raw.get("actor", "event"))),
+            "position": _position(raw.get("position", [0, 0])),
+            "duration_ms": _duration(raw.get("duration_ms"), 600),
+        }
+    if step_type == "actor_visibility":
+        return {
+            "type": "actor_visibility",
+            "actor": _slug(str(raw.get("actor", "event"))),
+            "visible": bool(raw.get("visible", True)),
         }
     text = str(raw.get("text", "")).strip()
     return {
@@ -65,19 +161,26 @@ def normalize_event(raw: object, used_ids: set[str] | None = None) -> dict | Non
         event_id = unique_event_id(name, used_ids)
     elif event_id in used_ids:
         event_id = unique_event_id(event_id, used_ids)
-    position = raw.get("position", [0, 0])
-    try:
-        x, y = int(position[0]), int(position[1])
-    except (IndexError, TypeError, ValueError):
-        x, y = 0, 0
+    trigger = str(raw.get("trigger", "step")).strip().lower()
+    if trigger not in TRIGGER_TYPES:
+        trigger = "step"
+    position = _position(raw.get("position", [0, 0]))
+    conditions = raw.get("conditions", {})
+    if not isinstance(conditions, dict):
+        conditions = {}
     steps = [step for item in raw.get("steps", []) if (step := normalize_step(item))]
     event = {
         "id": event_id,
         "name": name,
+        "trigger": trigger,
         "map": str(raw.get("map", "world")).strip() or "world",
-        "position": [max(0, x), max(0, y)],
+        "position": position,
         "icon": Path(str(raw.get("icon", ""))).name,
         "once": bool(raw.get("once", True)),
+        "conditions": {
+            "all": _flag_list(conditions.get("all", raw.get("required_flags", []))),
+            "none": _flag_list(conditions.get("none", raw.get("forbidden_flags", []))),
+        },
         "steps": steps,
     }
     used_ids.add(event_id)
@@ -117,12 +220,44 @@ def save_event_document(document: dict, path: Path = EVENTS_PATH) -> dict:
     return normalized
 
 
-def event_index(events: Iterable[dict]) -> dict[tuple[str, tuple[int, int]], dict]:
+def conditions_met(event: dict, flags: Iterable[str]) -> bool:
+    active = set(flags)
+    conditions = event.get("conditions", {})
+    required = set(conditions.get("all", []))
+    forbidden = set(conditions.get("none", []))
+    return required <= active and not (forbidden & active)
+
+
+def event_index(
+    events: Iterable[dict],
+    trigger: str = "step",
+) -> dict[tuple[str, tuple[int, int]], dict]:
     return {
         (event["map"], tuple(event["position"])): event
         for event in events
-        if event.get("steps")
+        if event.get("steps") and event.get("trigger", "step") == trigger
     }
+
+
+def events_for_trigger(
+    events: Iterable[dict],
+    trigger: str,
+    *,
+    map_name: str | None = None,
+    position: tuple[int, int] | None = None,
+    flags: Iterable[str] = (),
+) -> list[dict]:
+    result = []
+    for event in events:
+        if event.get("trigger", "step") != trigger or not event.get("steps"):
+            continue
+        if map_name is not None and event.get("map") != map_name:
+            continue
+        if position is not None and tuple(event.get("position", ())) != tuple(position):
+            continue
+        if conditions_met(event, flags):
+            result.append(event)
+    return result
 
 
 def map_sizes() -> dict[str, tuple[int, int]]:

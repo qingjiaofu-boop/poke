@@ -20,7 +20,15 @@ from pathlib import Path
 
 import pygame
 
-from event_system import ICON_DIR, PRELOAD_DIR, event_index, load_event_document
+from event_system import (
+    ICON_DIR,
+    PRELOAD_DIR,
+    conditions_met,
+    event_index,
+    events_for_trigger,
+    load_event_document,
+)
+from scripted_battle import GrotleTutorial
 
 try:
     import serial
@@ -171,6 +179,8 @@ class Game:
         self.font = self._font(13)
         self.small = self._font(10)
         self.title = self._font(16, True)
+        self.battle_font = self._battle_font(18)
+        self.battle_small = self._battle_font(14)
         self.events: queue.Queue = queue.Queue()
         self.serial = SerialBridge(port, self.events)
         self.serial.start()
@@ -202,6 +212,10 @@ class Game:
         self.heavy_ready = False
         self.battle_lost = False
         self.battle_effect = None
+        self.battle_started_at = time.monotonic()
+        self.battle_message = ""
+        self.battle_message_reveal = 0
+        self.battle_message_tick = 0
         self.battle_notice = ""
         self.battle_notice_until = 0.0
         self.map_view: str | None = None
@@ -219,10 +233,18 @@ class Game:
         self.map_events = self.map_event_document["events"]
         self.map_event_index = event_index(self.map_events)
         self.completed_map_events: set[str] = set()
+        self.story_flags: set[str] = set()
         self.active_map_event: dict | None = None
         self.active_map_event_step = 0
         self.map_event_origin: dict | None = None
+        self.event_action: dict | None = None
+        self.event_camera_focus: tuple[float, float] | None = None
+        self.event_actor_positions: dict[str, tuple[float, float]] = {}
+        self.hidden_event_actors: set[str] = set()
+        self.event_animation_cache: dict[str, list[pygame.Surface]] = {}
         self.event_battle_active = False
+        self.event_battle_return: dict | None = None
+        self.scripted_battle: GrotleTutorial | None = None
         self.map_event_icon_cache: dict[str, pygame.Surface | None] = {}
         self.dialogue_preload_cache: dict[str, pygame.Surface | None] = {}
         self.pos[:] = self.scene_start("home")
@@ -230,10 +252,26 @@ class Game:
         if world:
             self.map_view = "world"
             self.map_view_pos[:] = world.start
+        self.trigger_game_start_event()
 
     @staticmethod
     def _font(size, bold=False):
-        candidates = [Path("C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc"), Path("C:/Windows/Fonts/simhei.ttf")]
+        candidates = [
+            Path("C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc"),
+            Path("C:/Windows/Fonts/simhei.ttf"),
+        ]
+        for path in candidates:
+            if path.exists():
+                return pygame.font.Font(str(path), size)
+        return pygame.font.Font(None, size)
+
+    @staticmethod
+    def _battle_font(size):
+        candidates = [
+            ASSETS / "resource" / "fonts" / "zpix.ttf",
+            Path("C:/Windows/Fonts/msyh.ttf"),
+            Path("C:/Windows/Fonts/simhei.ttf"),
+        ]
         for path in candidates:
             if path.exists():
                 return pygame.font.Font(str(path), size)
@@ -292,19 +330,28 @@ class Game:
                 self.player = self.player.subsurface((0, 0, 32, 32)).copy()
             self.player = pygame.transform.scale(self.player, (TILE_SIZE, TILE_SIZE))
         battle_player = self._load("resource/battle/pokemon/back/ferrothorn.png") or self.player
-        self.ferro_battle = pygame.transform.scale(battle_player, (96, 96)) if battle_player else None
+        self.ferro_battle = battle_player
         battle_enemy = self._load("resource/battle/pokemon/front/ferroseed.png") or self.friend
-        self.enemy_battle = pygame.transform.scale(battle_enemy, (84, 84)) if battle_enemy else None
-        self.battle_background = self._load("resource/battle/backgrounds/cave1_bg.png")
+        self.enemy_battle = battle_enemy
+        self.default_enemy_battle = self.enemy_battle
+        grotle = self._load("resource/dialogue/pokemons/GROTLE.png")
+        self.grotle_battle = grotle
+        self.battle_background = self._load("resource/battle/backgrounds/field_eve_bg.png")
         self.battle_bases = {
-            "player": self._load("resource/battle/backgrounds/cave1_player_base.png"),
-            "foe": self._load("resource/battle/backgrounds/cave1_foe_base.png"),
+            "player": self._load("resource/battle/backgrounds/field_eve_base0.png"),
+            "foe": self._load("resource/battle/backgrounds/field_eve_base1.png"),
         }
         self.battle_ui = {
-            "player_box": self._load("resource/battle/ui/databox_normal.png"),
-            "foe_box": self._load("resource/battle/ui/databox_normal_foe.png"),
-            "fight": self._load("resource/battle/ui/overlay_fight.png"),
-            "message": self._load("resource/battle/ui/overlay_message.png"),
+            "player_box": self._load("resource/battle/ui_gen3_2x/databox_player_2x.png"),
+            "foe_box": self._load("resource/battle/ui_gen3_2x/databox_foe_2x.png"),
+            "hp_green": self._load("resource/battle/ui_gen3_2x/hp_fill_green_2x.png"),
+            "hp_yellow": self._load("resource/battle/ui_gen3_2x/hp_fill_yellow_2x.png"),
+            "hp_red": self._load("resource/battle/ui_gen3_2x/hp_fill_red_2x.png"),
+            "fight": self._load("resource/battle/ui_gen3_2x/panel_move_list_2x.png"),
+            "move_info": self._load("resource/battle/ui_gen3_2x/panel_move_info_2x.png"),
+            "message": self._load("resource/battle/ui_gen3_2x/panel_message_2x.png"),
+            "cursor": self._load("resource/battle/ui_gen3_2x/cursor_command_2x.png"),
+            "continue": self._load("resource/battle/ui_gen3_2x/cursor_continue_2x.png"),
         }
         self.battle_effect_frames = {
             "synthesis": self._load_battle_effect_frames("synthesis_heal.png"),
@@ -658,7 +705,9 @@ class Game:
             self.update_movement()
             self.update_field_attack()
             self.update_warp_fade()
+            self.update_event_action()
             self.update_battle_effect()
+            self.update_battle_message_reveal()
             self.update_dialogue_reveal()
             self.draw()
         self.serial.close()
@@ -671,7 +720,7 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
-                elif self.step or self.field_attack or self.warp_fade_frames:
+                elif self.step or self.field_attack or self.warp_fade_frames or self.event_action:
                     continue
                 elif event.key == pygame.K_r:
                     self.reset()
@@ -721,7 +770,7 @@ class Game:
                 else:
                     self.temperature = self.adc_temperature(event[2])
             elif event[0] == "vibration":
-                if self.step or self.field_attack or self.warp_fade_frames:
+                if self.step or self.field_attack or self.warp_fade_frames or self.event_action:
                     continue
                 self.vibration_count += 1
                 self.vibration()
@@ -735,7 +784,7 @@ class Game:
         return 1.0 / (1.0 / 298.15 + math.log(resistance / 10000.0) / 3950.0) - 273.15
 
     def command(self, command):
-        if self.step or self.field_attack or self.warp_fade_frames:
+        if self.step or self.field_attack or self.warp_fade_frames or self.event_action:
             return
         if command == 6:
             self.reset()
@@ -743,8 +792,9 @@ class Game:
         if self.dialogue:
             if command == 5:
                 text = self.dialogue[self.dialogue_index]
-                if self.dialogue_reveal < len(text):
-                    self.dialogue_reveal = len(text)
+                _speaker, message = self._split_dialogue(text)
+                if self.dialogue_reveal < len(message):
+                    self.dialogue_reveal = len(message)
                 else:
                     self.advance_dialogue()
             elif command == 7 and self.active_map_event is None:
@@ -890,6 +940,8 @@ class Game:
         destination = WARP_BY_SOURCE.get((self.map_view, tuple(self.map_view_pos)))
         if destination is None:
             return False
+        if self.trigger_event_at("warp_attempt"):
+            return True
         target_map_name, target = destination
         target_map = self.tile_maps.get(target_map_name)
         if target_map is None or target in target_map.blocked:
@@ -930,8 +982,8 @@ class Game:
         if self.step["frame"] >= MOVE_FRAMES:
             self.step["position"][:] = self.step["to"]
             self.step = None
-            self.trigger_warp()
-            if not self.trigger_map_event():
+            warp_handled = self.trigger_warp()
+            if not warp_handled and not self.trigger_map_event():
                 self.trigger_step_event()
 
     def is_npc_tile(self, scene, point):
@@ -960,15 +1012,43 @@ class Game:
         self.dialogue_reveal = 0
         self.dialogue_reveal_tick = 0
 
-    def trigger_map_event(self):
-        """Start the ordered event placed on the tile the player just entered."""
+    def trigger_game_start_event(self):
+        """Start the first eligible opening event after the initial map is ready."""
+        map_name = self.map_view or self.scene
+        candidates = events_for_trigger(
+            self.map_events, "game_start", map_name=map_name, flags=self.story_flags
+        )
+        for event in candidates:
+            if not (event.get("once", True) and event["id"] in self.completed_map_events):
+                self.start_map_event(event)
+                return True
+        return False
+
+    def trigger_event_at(self, trigger):
+        """Start an eligible event for the player's current map coordinate."""
         map_name = self.map_view or self.scene
         position = tuple(self.map_view_pos if self.map_view else self.pos)
-        event = self.map_event_index.get((map_name, position))
-        if event is None or self.active_map_event is not None:
+        if self.active_map_event is not None:
             return False
-        if event.get("once", True) and event["id"] in self.completed_map_events:
-            return False
+        candidates = events_for_trigger(
+            self.map_events,
+            trigger,
+            map_name=map_name,
+            position=position,
+            flags=self.story_flags,
+        )
+        for event in candidates:
+            if event.get("once", True) and event["id"] in self.completed_map_events:
+                continue
+            self.start_map_event(event)
+            return True
+        return False
+
+    def trigger_map_event(self):
+        """Start the ordered step event placed on the entered tile."""
+        return self.trigger_event_at("step")
+
+    def start_map_event(self, event):
         self.active_map_event = event
         self.active_map_event_step = 0
         self.map_event_origin = {
@@ -977,46 +1057,143 @@ class Game:
             "map_position": tuple(self.map_view_pos),
             "scene_position": tuple(self.pos),
             "facing": self.facing,
+            "story_flags": set(self.story_flags),
+            "actor_positions": dict(self.event_actor_positions),
+            "hidden_actors": set(self.hidden_event_actors),
         }
         self.event_battle_active = False
+        self.event_battle_return = None
         self.run_map_event_step()
-        return True
 
     def run_map_event_step(self):
         """Execute steps until one needs player input, or finish the event."""
+        while self.active_map_event is not None:
+            event = self.active_map_event
+            steps = event.get("steps", [])
+            if self.active_map_event_step >= len(steps):
+                self.finish_map_event()
+                return
+
+            step = steps[self.active_map_event_step]
+            step_type = step.get("type", "dialogue")
+            if step_type == "battle":
+                self.start_event_battle(step.get("battle_id", "placeholder"))
+                return
+            if step_type == "dialogue":
+                speaker = str(step.get("speaker", "")).strip()
+                message = str(step.get("text", ""))
+                self.dialogue = [f"{speaker}：{message}" if speaker else message]
+                self.dialogue_index = 0
+                self.dialogue_source = "map_event"
+                self.dialogue_preload = str(step.get("preload", "no_portrait_bottom.png"))
+                self.dialogue_reveal = 0
+                self.dialogue_reveal_tick = 0
+                return
+            if step_type == "set_flag":
+                flag = str(step.get("flag", "")).strip()
+                if flag:
+                    if step.get("value", True):
+                        self.story_flags.add(flag)
+                    else:
+                        self.story_flags.discard(flag)
+                self.active_map_event_step += 1
+                continue
+            if step_type == "actor_visibility":
+                actor = self.resolve_event_actor(step.get("actor", "event"))
+                if step.get("visible", True):
+                    self.hidden_event_actors.discard(actor)
+                else:
+                    self.hidden_event_actors.add(actor)
+                self.active_map_event_step += 1
+                continue
+            self.begin_event_action(step)
+            return
+
+    def finish_map_event(self):
         event = self.active_map_event
-        if event is None:
-            return
-        steps = event.get("steps", [])
-        if self.active_map_event_step >= len(steps):
-            if event.get("once", True):
-                self.completed_map_events.add(event["id"])
-            self.restore_map_event_origin()
-            self.active_map_event = None
-            self.active_map_event_step = 0
-            self.map_event_origin = None
-            self.event_battle_active = False
-            self.dialogue = []
-            self.dialogue_source = None
-            self.dialogue_preload = None
-            self.battle_won = False
-            self.battle_lost = False
-            self.battle_effect = None
-            return
+        if event and event.get("once", True):
+            self.completed_map_events.add(event["id"])
+        self.active_map_event = None
+        self.active_map_event_step = 0
+        self.map_event_origin = None
+        self.event_battle_active = False
+        self.event_battle_return = None
+        self.event_action = None
+        self.event_camera_focus = None
+        self.dialogue = []
+        self.dialogue_source = None
+        self.dialogue_preload = None
+        self.battle_won = False
+        self.battle_lost = False
+        self.battle_effect = None
+        self.scripted_battle = None
 
-        step = steps[self.active_map_event_step]
-        if step.get("type") == "battle":
-            self.start_event_battle(step.get("battle_id", "placeholder"))
-            return
+    def resolve_event_actor(self, actor):
+        actor = str(actor or "event")
+        if actor == "event" and self.active_map_event:
+            return self.active_map_event["id"]
+        return actor
 
-        speaker = str(step.get("speaker", "")).strip()
-        message = str(step.get("text", ""))
-        self.dialogue = [f"{speaker}：{message}" if speaker else message]
-        self.dialogue_index = 0
-        self.dialogue_source = "map_event"
-        self.dialogue_preload = str(step.get("preload", "no_portrait_bottom.png"))
-        self.dialogue_reveal = 0
-        self.dialogue_reveal_tick = 0
+    def begin_event_action(self, step):
+        """Start a non-blocking timeline step; update_event_action advances it."""
+        kind = step.get("type")
+        duration_ms = max(0, int(step.get("duration_ms", 0)))
+        total = max(1, round(duration_ms * FPS / 1000))
+        action = {"type": kind, "frame": 0, "total": total, "step": step}
+        player = tuple(self.map_view_pos if self.map_view else self.pos)
+        if kind == "toast":
+            self.show_toast(str(step.get("text", "")), duration_ms / 1000)
+        elif kind == "camera_pan":
+            action["from"] = self.event_camera_focus or player
+            action["to"] = player if step.get("target") == "player" else tuple(step.get("position", player))
+        elif kind == "actor_move":
+            actor = self.resolve_event_actor(step.get("actor", "event"))
+            action["actor"] = actor
+            if actor == "player":
+                action["from"] = player
+            else:
+                action["from"] = self.event_actor_positions.get(
+                    actor, tuple(self.active_map_event.get("position", player))
+                )
+            action["to"] = tuple(step.get("position", action["from"]))
+        self.event_action = action
+
+    def update_event_action(self):
+        action = self.event_action
+        if not action:
+            return
+        action["frame"] += 1
+        progress = min(1.0, action["frame"] / action["total"])
+        if action["type"] == "camera_pan":
+            start, target = action["from"], action["to"]
+            eased = progress * progress * (3 - 2 * progress)
+            self.event_camera_focus = (
+                start[0] + (target[0] - start[0]) * eased,
+                start[1] + (target[1] - start[1]) * eased,
+            )
+        elif action["type"] == "actor_move":
+            start, target = action["from"], action["to"]
+            current = (
+                start[0] + (target[0] - start[0]) * progress,
+                start[1] + (target[1] - start[1]) * progress,
+            )
+            if action["actor"] != "player":
+                self.event_actor_positions[action["actor"]] = current
+        if progress < 1.0:
+            return
+        step = action["step"]
+        if action["type"] == "camera_pan" and step.get("target") == "player":
+            self.event_camera_focus = None
+        elif action["type"] == "actor_move" and action["actor"] == "player":
+            destination = [round(value) for value in action["to"]]
+            if self.map_view:
+                self.map_view_pos[:] = destination
+            else:
+                self.pos[:] = destination
+        self.event_action = None
+        if self.active_map_event is not None:
+            self.active_map_event_step += 1
+            self.run_map_event_step()
 
     def advance_dialogue(self):
         """Advance legacy dialogue or return control to the ordered event."""
@@ -1042,7 +1219,8 @@ class Game:
         if not self.dialogue:
             return
         text = self.dialogue[self.dialogue_index]
-        if self.dialogue_reveal >= len(text):
+        _speaker, message = self._split_dialogue(text)
+        if self.dialogue_reveal >= len(message):
             return
         self.dialogue_reveal_tick += 1
         if self.dialogue_reveal_tick >= DIALOGUE_CHAR_FRAMES:
@@ -1050,6 +1228,13 @@ class Game:
             self.dialogue_reveal_tick = 0
 
     def actor_grid_position(self, position):
+        action = self.event_action
+        if action and action.get("type") == "actor_move" and action.get("actor") == "player":
+            progress = min(1.0, action["frame"] / action["total"])
+            start_x, start_y = action["from"]
+            target_x, target_y = action["to"]
+            return (start_x + (target_x - start_x) * progress,
+                    start_y + (target_y - start_y) * progress)
         if not self.step or self.step["context"] != self._movement_context():
             return float(position[0]), float(position[1])
         progress = self.step["frame"] / MOVE_FRAMES
@@ -1133,17 +1318,40 @@ class Game:
         self.battle_won = False
         self.battle_lost = False
         self.battle_effect = None
+        self.battle_started_at = time.monotonic()
+        self.battle_message = ""
+        self.battle_message_reveal = 0
+        self.battle_message_tick = 0
+        self.scripted_battle = None
+        self.enemy_battle = self.default_enemy_battle
         self.set_battle_notice("青梅派出了种子铁球！", 2.4)
 
     def start_event_battle(self, battle_id):
-        """Run the existing training battle as the current battle placeholder."""
+        """Start either a configured story battle or the legacy placeholder."""
+        self.event_battle_return = {
+            "map_view": self.map_view,
+            "scene": self.scene,
+            "map_position": tuple(self.map_view_pos),
+            "scene_position": tuple(self.pos),
+            "facing": self.facing,
+        }
         self.event_battle_active = True
         self.dialogue = []
         self.dialogue_source = None
         self.dialogue_preload = None
         self.map_view = None
         self.start_battle()
-        self.set_battle_notice(f"事件战斗 [{battle_id}]：当前使用训练战占位。", 2.4)
+        self.event_battle_active = True
+        if battle_id == "grotle_tutorial":
+            self.scripted_battle = GrotleTutorial()
+            self.player_hp = self.scripted_battle.player_hp
+            self.enemy_hp = self.scripted_battle.foe_hp
+            self.enemy_battle = self.grotle_battle or self.default_enemy_battle
+            self.battle_notice = ""
+            self.battle_notice_until = 0.0
+            self.sync_scripted_battle_message(force=True)
+        else:
+            self.set_battle_notice(f"事件战斗 [{battle_id}]：当前使用训练战占位。", 2.4)
 
     def restore_map_event_origin(self):
         origin = self.map_event_origin
@@ -1154,6 +1362,11 @@ class Game:
         self.map_view_pos[:] = origin["map_position"]
         self.pos[:] = origin["scene_position"]
         self.facing = origin["facing"]
+        self.story_flags = set(origin.get("story_flags", self.story_flags))
+        self.event_actor_positions = dict(origin.get("actor_positions", self.event_actor_positions))
+        self.hidden_event_actors = set(origin.get("hidden_actors", self.hidden_event_actors))
+        self.event_camera_focus = None
+        self.event_action = None
         self.step = None
         self.field_attack = None
         self.warp_fade_frames = 0
@@ -1164,8 +1377,22 @@ class Game:
         self.event_battle_active = False
         self.battle_lost = False
         self.battle_effect = None
+        self.scripted_battle = None
+        self.restore_event_battle_return()
         self.active_map_event_step += 1
         self.run_map_event_step()
+
+    def restore_event_battle_return(self):
+        state = self.event_battle_return or self.map_event_origin
+        if state is None:
+            return
+        self.scene = state["scene"]
+        self.map_view = state["map_view"]
+        self.map_view_pos[:] = state["map_position"]
+        self.pos[:] = state["scene_position"]
+        self.facing = state["facing"]
+        self.event_battle_return = None
+        self.event_camera_focus = None
 
     def restart_map_event_after_defeat(self):
         self.restore_map_event_origin()
@@ -1173,11 +1400,16 @@ class Game:
         self.battle_won = False
         self.battle_lost = False
         self.battle_effect = None
+        self.scripted_battle = None
+        self.event_battle_return = None
         self.active_map_event_step = 0
         self.run_map_event_step()
 
     def battle_command(self, command):
         if self.battle_effect:
+            return
+        if self.scripted_battle:
+            self.scripted_battle_command(command)
             return
         if self.battle_won:
             if command == 5:
@@ -1203,6 +1435,68 @@ class Game:
             self.move_cursor = (self.move_cursor + (1 if command == 2 else -1)) % 4
         elif command == 5:
             self.use_move(self.move_cursor)
+
+    def scripted_battle_command(self, command):
+        battle = self.scripted_battle
+        if battle is None:
+            return
+        if battle.outcome == "won":
+            if command == 5:
+                self.finish_event_battle()
+            return
+        if battle.outcome == "lost":
+            if command == 5:
+                self.restart_map_event_after_defeat()
+            return
+        action = None
+        hp_before = (battle.player_hp, battle.foe_hp)
+        if battle.mode == "message":
+            if command == 5:
+                self.sync_scripted_battle_message()
+                _speaker, message = self._split_dialogue(self.battle_message)
+                if self.battle_message_reveal < len(message):
+                    self.battle_message_reveal = len(message)
+                    return
+                action = battle.confirm()
+        elif battle.mode == "moves":
+            moves = battle.available_moves
+            if command in (1, 3):
+                self.move_cursor = (self.move_cursor - 1) % len(moves)
+            elif command in (2, 4):
+                self.move_cursor = (self.move_cursor + 1) % len(moves)
+            elif command == 5:
+                action = battle.choose_move(moves[self.move_cursor % len(moves)], self.light)
+        if action:
+            if action.target == "player":
+                transition = ("player", hp_before[0], battle.player_hp)
+            else:
+                transition = ("foe", hp_before[1], battle.foe_hp)
+            self.begin_battle_effect(action.effect, action.message, action.target, transition)
+        else:
+            self.player_hp = battle.player_hp
+            self.enemy_hp = battle.foe_hp
+            self.sync_scripted_battle_message()
+
+    def sync_scripted_battle_message(self, force=False):
+        if not self.scripted_battle:
+            return
+        message = self.scripted_battle.message if self.scripted_battle.mode == "message" else ""
+        if force or message != self.battle_message:
+            self.battle_message = message
+            self.battle_message_reveal = 0
+            self.battle_message_tick = 0
+
+    def update_battle_message_reveal(self):
+        if self.scene != "battle" or not self.scripted_battle or self.battle_effect:
+            return
+        self.sync_scripted_battle_message()
+        _speaker, message = self._split_dialogue(self.battle_message)
+        if self.scripted_battle.mode != "message" or self.battle_message_reveal >= len(message):
+            return
+        self.battle_message_tick += 1
+        if self.battle_message_tick >= DIALOGUE_CHAR_FRAMES:
+            self.battle_message_reveal += 1
+            self.battle_message_tick = 0
 
     def use_move(self, move):
         light_value = 512 if self.light is None else self.light
@@ -1242,11 +1536,21 @@ class Game:
         self.battle_notice = text
         self.battle_notice_until = time.monotonic() + seconds
 
-    def begin_battle_effect(self, effect, message):
+    def begin_battle_effect(self, effect, message, target=None, hp_transition=None):
         sound = self.battle_sounds.get(effect)
         if sound:
             sound.play()
-        self.battle_effect = {"name": effect, "frame": 0, "message": message}
+        self.battle_effect = {
+            "name": effect,
+            "frame": 0,
+            "message": message,
+            "target": target or ("player" if effect == "synthesis" else "foe"),
+            "hp_transition": hp_transition,
+        }
+        if self.scripted_battle:
+            self.battle_message = message
+            self.battle_message_reveal = len(message)
+            self.battle_message_tick = 0
         self.set_battle_notice(message, 2.2)
 
     def update_battle_effect(self):
@@ -1254,10 +1558,25 @@ class Game:
             return
         self.battle_effect["frame"] += 1
         frames = self.battle_effect_frames.get(self.battle_effect["name"], [])
-        # A two-frame hold keeps pixel effects readable at 60 FPS.
-        duration = max(16, len(frames) * 2)
+        # The standalone battle UI holds each 192px effect frame for ~110ms.
+        duration = max(48, len(frames) * 7)
+        transition = self.battle_effect.get("hp_transition")
+        if transition:
+            side, start, target = transition
+            value = round(start + (target - start) * min(1.0, self.battle_effect["frame"] / duration))
+            if side == "player":
+                self.player_hp = value
+            else:
+                self.enemy_hp = value
         if self.battle_effect["frame"] >= duration:
             self.battle_effect = None
+            if self.scripted_battle and self.scripted_battle.mode == "action":
+                self.scripted_battle.complete_action()
+                self.player_hp = self.scripted_battle.player_hp
+                self.enemy_hp = self.scripted_battle.foe_hp
+                self.battle_won = self.scripted_battle.outcome == "won"
+                self.battle_lost = self.scripted_battle.outcome == "lost"
+                self.sync_scripted_battle_message(force=True)
 
     def vibration(self):
         if self.scene == "cave3" and self.adjacent(self.pos, self.ROCK_POS) and not self.rock_broken:
@@ -1301,10 +1620,17 @@ class Game:
         self.dialogue_reveal_tick = 0
         self.triggered_step_events.clear()
         self.completed_map_events.clear()
+        self.story_flags.clear()
         self.active_map_event = None
         self.active_map_event_step = 0
         self.map_event_origin = None
+        self.event_action = None
+        self.event_camera_focus = None
+        self.event_actor_positions.clear()
+        self.hidden_event_actors.clear()
         self.event_battle_active = False
+        self.event_battle_return = None
+        self.scripted_battle = None
         self.meteor_phase = 0
         self.player_hp, self.enemy_hp = 100, 100
         self.show_toast("回到父亲的家。靠近左上角父亲并按 Enter。", 3)
@@ -1324,7 +1650,9 @@ class Game:
         if self.map_view or self.scene not in ("battle", "ending"):
             self.draw_status_badge()
         if self.dialogue:
-            text = self.dialogue[self.dialogue_index][:self.dialogue_reveal]
+            speaker, message = self._split_dialogue(self.dialogue[self.dialogue_index])
+            visible_message = message[:self.dialogue_reveal]
+            text = f"{speaker}：{visible_message}" if speaker else visible_message
             if self.dialogue_preload:
                 self.draw_preloaded_dialogue(text, self.dialogue_preload)
             else:
@@ -1349,6 +1677,7 @@ class Game:
         self.draw_actor(actor_x, actor_y)
         self.draw_tile_layer(tile_map, "upper", camera_x, camera_y, origin_x, origin_y)
         self.draw_rock_break(camera_x, camera_y, origin_x, origin_y)
+        self.draw_event_animation(camera_x, camera_y, origin_x, origin_y)
 
         index = self.MAP_VIEW_ORDER.index(self.map_view) + 1
         label = f"{index}  {self.MAP_VIEW_TITLES[self.map_view]}  {tile_map.width}×{tile_map.height}"
@@ -1357,14 +1686,22 @@ class Game:
         pygame.draw.rect(self.screen, (169, 190, 126), label_box, 1, border_radius=3)
         self.screen.blit(self.title.render(label, True, (252, 247, 210)), (13, 10))
 
-    @staticmethod
-    def map_camera(tile_map, actor_pos):
+    def map_camera(self, tile_map, actor_pos):
         map_width = tile_map.width * TILE_SIZE
         map_height = tile_map.height * TILE_SIZE
-        focus_x = (actor_pos[0] + 0.5) * TILE_SIZE
-        focus_y = (actor_pos[1] + 0.5) * TILE_SIZE
+        focus = self.event_camera_focus or actor_pos
+        focus_x = (focus[0] + 0.5) * TILE_SIZE
+        focus_y = (focus[1] + 0.5) * TILE_SIZE
         camera_x = round(max(0, min(max(0, map_width - PLAY_W), focus_x - PLAY_W / 2)))
         camera_y = round(max(0, min(max(0, map_height - PLAY_H), focus_y - PLAY_H / 2)))
+        action = self.event_action
+        if action and action.get("type") == "camera_shake":
+            strength = int(action["step"].get("intensity", 6))
+            decay = 1.0 - min(1.0, action["frame"] / action["total"])
+            camera_x += round(math.sin(action["frame"] * 2.7) * strength * decay)
+            camera_y += round(math.cos(action["frame"] * 3.9) * strength * decay)
+            camera_x = max(0, min(max(0, map_width - PLAY_W), camera_x))
+            camera_y = max(0, min(max(0, map_height - PLAY_H), camera_y))
         origin_x = max(0, (PLAY_W - map_width) // 2)
         origin_y = max(0, (PLAY_H - map_height) // 2)
         return camera_x, camera_y, origin_x, origin_y
@@ -1418,9 +1755,15 @@ class Game:
         for event in self.map_events:
             if event.get("map") != tile_map.name:
                 continue
+            if event.get("trigger", "step") != "step":
+                continue
+            if not conditions_met(event, self.story_flags):
+                continue
             if event.get("once", True) and event["id"] in self.completed_map_events:
                 continue
-            x, y = event["position"]
+            if event["id"] in self.hidden_event_actors:
+                continue
+            x, y = self.event_actor_positions.get(event["id"], event["position"])
             if not (0 <= x < tile_map.width and 0 <= y < tile_map.height):
                 continue
             icon = self.load_map_event_icon(event.get("icon", ""))
@@ -1473,7 +1816,50 @@ class Game:
         # edges can cover the actor's head while walking underneath them.
         if outdoor and self.scene in self.tile_maps:
             self.draw_tile_layer(self.tile_maps[self.scene], "upper", *self._map_camera)
+            self.draw_event_animation(*self._map_camera)
         self.screen.blit(self.title.render(self.SCENES[self.scene][3], True, (252, 247, 210)), (10, 9))
+
+    def load_event_animation(self, name):
+        if name in self.event_animation_cache:
+            return self.event_animation_cache[name]
+        frames = []
+        if name == "meteor":
+            for index in range(1, 4):
+                image = self._load(f"resource/Meteor/Meteor{index}.png")
+                if image:
+                    frames.append(image)
+        elif name == "dust":
+            sheet = self._load("resource/map/effects/dust_and_grass.png")
+            if sheet:
+                frame_size = 192
+                for y in range(0, sheet.get_height(), frame_size):
+                    for x in range(0, sheet.get_width(), frame_size):
+                        if x + frame_size <= sheet.get_width() and y + frame_size <= sheet.get_height():
+                            frames.append(sheet.subsurface((x, y, frame_size, frame_size)).copy())
+        self.event_animation_cache[name] = frames
+        return frames
+
+    def draw_event_animation(self, camera_x, camera_y, origin_x=0, origin_y=0):
+        action = self.event_action
+        if not action or action.get("type") != "play_animation":
+            return
+        step = action["step"]
+        name = step.get("animation", "")
+        frames = self.load_event_animation(name)
+        if not frames:
+            return
+        progress = min(1.0, action["frame"] / action["total"])
+        frame = frames[min(len(frames) - 1, int(progress * len(frames)))]
+        x, y = step.get("position", (0, 0))
+        screen_x = origin_x + (x + 0.5) * TILE_SIZE - camera_x
+        screen_y = origin_y + (y + 0.5) * TILE_SIZE - camera_y
+        if name == "meteor":
+            screen_y -= (1.0 - progress) * 180
+            size = (64, 64)
+        else:
+            size = (80, 80)
+        image = pygame.transform.scale(frame, size)
+        self.screen.blit(image, image.get_rect(center=(round(screen_x), round(screen_y))))
 
     def tile_point(self, pos):
         outdoor = self.outdoor_maps.get(self.scene)
@@ -1558,48 +1944,66 @@ class Game:
 
     def draw_battle(self):
         if self.battle_background:
-            self.blit_cover(self.battle_background, pygame.Rect(0, 0, WIDTH, 230))
+            self.screen.blit(self.battle_background, (0, 0), (16, 0, WIDTH, 228))
         else:
-            self.screen.fill((43, 72, 65))
+            self.screen.fill((43, 72, 65), (0, 0, WIDTH, 228))
 
-        self.draw_battle_base("player", pygame.Rect(6, 174, 245, 31))
-        self.draw_battle_base("foe", pygame.Rect(300, 83, 145, 72))
-        if self.ferro_battle:
-            self.screen.blit(self.ferro_battle, self.ferro_battle.get_rect(center=(122, 160)))
-        if self.enemy_battle:
-            self.screen.blit(self.enemy_battle, self.enemy_battle.get_rect(center=(370, 94)))
-        self.draw_battle_databox("player", pygame.Rect(260, 156, 212, 65), "坚果哑铃", self.player_hp, 20)
-        self.draw_battle_databox("foe", pygame.Rect(8, 7, 204, 48), "青梅的种子铁球", self.enemy_hp, 12)
+        player_base = self.battle_bases.get("player")
+        foe_base = self.battle_bases.get("foe")
+        if player_base:
+            self.screen.blit(player_base, (-16, 166))
+        if foe_base:
+            self.screen.blit(foe_base, (240, 44))
+
+        intro = min(1.0, (time.monotonic() - self.battle_started_at) / 0.56)
+        player_x = round(-120 + 168 * intro)
+        foe_x = round(440 - 148 * intro)
+        player_y = 62
+        foe_y = 8 + round(2 * math.sin(time.monotonic() / 0.21))
+        if self.battle_effect:
+            offset = 5 if (self.battle_effect["frame"] // 4) % 2 == 0 else -5
+            if self.battle_effect.get("target") == "player":
+                player_x += offset
+            elif self.battle_effect.get("target") == "foe":
+                foe_x += offset
+        if self.ferro_battle and not self.battle_lost:
+            self.screen.blit(self.ferro_battle, (player_x, player_y))
+        if self.enemy_battle and not self.battle_won:
+            self.screen.blit(self.enemy_battle, (foe_x, foe_y))
         self.draw_battle_effect()
+        self.draw_gen3_databoxes()
         self.draw_battle_menu()
 
-    def draw_battle_base(self, side, target):
-        image = self.battle_bases.get(side)
-        if image:
-            self.screen.blit(pygame.transform.scale(image, target.size), target)
-        else:
-            pygame.draw.ellipse(self.screen, (73, 112, 84), target)
+    def draw_gen3_databoxes(self):
+        foe_box = self.battle_ui.get("foe_box")
+        player_box = self.battle_ui.get("player_box")
+        if foe_box:
+            self.screen.blit(foe_box, (6, 8))
+        if player_box:
+            self.screen.blit(player_box, (280, 146))
+        foe_name = (
+            self.scripted_battle.config["opponent"]["name"]
+            if self.scripted_battle else "青梅的种子铁球"
+        )
+        text_color = (48, 48, 40)
+        self.screen.blit(self.battle_font.render(foe_name, False, text_color), (18, 18))
+        self.screen.blit(self.battle_font.render("坚果哑铃", False, text_color), (292, 156))
+        foe_max = self.scripted_battle.foe_max_hp if self.scripted_battle else 100
+        player_max = self.scripted_battle.player_max_hp if self.scripted_battle else 100
+        self.draw_gen3_hp_bar("foe", self.enemy_hp, foe_max)
+        self.draw_gen3_hp_bar("player", self.player_hp, player_max)
+        hp_text = f"{round(self.player_hp)}/{player_max}"
+        rendered = self.battle_small.render(hp_text, False, text_color)
+        self.screen.blit(rendered, (466 - rendered.get_width(), 194))
 
-    def draw_battle_databox(self, side, target, name, hp, level):
-        image = self.battle_ui.get(f"{side}_box")
-        if image:
-            self.screen.blit(pygame.transform.scale(image, target.size), target)
-        else:
-            pygame.draw.rect(self.screen, (221, 222, 211), target)
-        name_font = self.small if side == "foe" else self.font
-        self.screen.blit(name_font.render(name, True, (27, 35, 32)), (target.x + 15, target.y + 8))
-        level_text = self.small.render(f"Lv.{level}", True, (27, 35, 32))
-        self.screen.blit(level_text, (target.right - level_text.get_width() - 10, target.y + 8))
-        bar = pygame.Rect(target.x + round(target.width * 0.43), target.y + round(target.height * 0.49),
-                          round(target.width * 0.47), 6)
-        pygame.draw.rect(self.screen, (40, 48, 45), bar)
-        hp_color = (84, 174, 75) if hp > 50 else ((218, 177, 53) if hp > 20 else (201, 70, 61))
-        pygame.draw.rect(self.screen, hp_color, (bar.x + 1, bar.y + 1,
-                                                  max(1, round((bar.width - 2) * hp / 100)),
-                                                  max(1, bar.height - 2)))
-        if side == "player":
-            hp_text = self.small.render(f"{hp}/100", True, (27, 35, 32))
-            self.screen.blit(hp_text, (target.right - hp_text.get_width() - 11, target.bottom - 15))
+    def draw_gen3_hp_bar(self, side, hp, maximum):
+        ratio = max(0.0, min(1.0, hp / max(1, maximum)))
+        asset_name = "hp_green" if ratio > 0.5 else ("hp_yellow" if ratio > 0.2 else "hp_red")
+        fill = self.battle_ui.get(asset_name)
+        width = max(0, min(96, round(96 * ratio / 2) * 2))
+        if fill and width:
+            x, y = (86, 44) if side == "foe" else (366, 184)
+            self.screen.blit(fill, (x, y), (0, 0, width, 6))
 
     def draw_battle_effect(self):
         effect = self.battle_effect
@@ -1608,45 +2012,118 @@ class Game:
         frames = self.battle_effect_frames.get(effect["name"], [])
         if not frames:
             return
-        frame = frames[min(len(frames) - 1, effect["frame"] // 2)]
-        target = (122, 153) if effect["name"] == "synthesis" else (370, 94)
-        effect_image = pygame.transform.scale(frame, (112, 112))
-        self.screen.blit(effect_image, effect_image.get_rect(center=target))
+        frame = frames[min(len(frames) - 1, effect["frame"] // 7)]
+        target = (126, 142) if effect.get("target") == "player" else (372, 100)
+        self.screen.blit(frame, frame.get_rect(center=target))
 
     def draw_battle_menu(self):
+        if self.scripted_battle:
+            self.draw_scripted_battle_menu()
+            return
         message_active = self.battle_effect or time.monotonic() < self.battle_notice_until
         if message_active:
             overlay = self.battle_ui.get("message")
             if overlay:
-                self.screen.blit(pygame.transform.scale(overlay, (WIDTH, 90)), (0, 230))
+                self.screen.blit(overlay, (0, 228))
             else:
-                pygame.draw.rect(self.screen, (42, 44, 60), (0, 230, WIDTH, 90))
+                pygame.draw.rect(self.screen, (40, 56, 64), (0, 228, WIDTH, 92))
             message = self.battle_effect["message"] if self.battle_effect else self.battle_notice
-            self.draw_multiline(18, 246, message, self.font, (38, 45, 54), WIDTH - 36)
-            hint = "动画播放中..." if self.battle_effect else "Enter 确认"
-            rendered = self.small.render(hint, True, (82, 76, 64))
-            self.screen.blit(rendered, (WIDTH - rendered.get_width() - 16, 297))
+            self.draw_multiline(
+                18, 244, message, self.battle_font, (248, 248, 248), 444,
+                antialias=False,
+            )
             return
 
-        overlay = self.battle_ui.get("fight")
-        if overlay:
-            self.screen.blit(pygame.transform.scale(overlay, (WIDTH, 90)), (0, 230))
+        move_list = self.battle_ui.get("fight")
+        move_info = self.battle_ui.get("move_info")
+        if move_list:
+            self.screen.blit(move_list, (0, 220))
         else:
-            pygame.draw.rect(self.screen, (40, 50, 53), (0, 230, WIDTH, 90))
+            pygame.draw.rect(self.screen, (232, 232, 232), (0, 220, 318, 100))
+        if move_info:
+            self.screen.blit(move_info, (324, 220))
         labels = ["光合作用", "日光束", "重磅冲撞", "气象球"]
-        for i, label in enumerate(labels):
-            col, row = i % 2, i // 2
-            box = pygame.Rect(20 + col * 180, 241 + row * 36, 165, 28)
-            color = (248, 241, 190) if i == self.move_cursor else (41, 46, 57)
-            suffix = " *" if i == 2 and self.heavy_ready else ""
-            self.screen.blit(self.font.render(label + suffix, True, color), (box.x + 8, box.y + 5))
-            if i == self.move_cursor:
-                pygame.draw.polygon(self.screen, (246, 189, 52),
-                                    ((box.x - 11, box.centery), (box.x - 3, box.centery - 5),
-                                     (box.x - 3, box.centery + 5)))
-        if self.heavy_ready:
-            ready = self.small.render("震动已检测：重磅冲撞可用", True, (252, 232, 134))
-            self.screen.blit(ready, (WIDTH - ready.get_width() - 12, 272))
+        positions = ((28, 234), (174, 234), (28, 274), (174, 274))
+        for index, (label, position) in enumerate(zip(labels, positions)):
+            suffix = " *" if index == 2 and self.heavy_ready else ""
+            self.screen.blit(self.battle_font.render(label + suffix, False, (48, 48, 40)), position)
+        cursor = self.battle_ui.get("cursor")
+        if cursor:
+            self.screen.blit(cursor, (8 + (self.move_cursor % 2) * 146,
+                                      232 + (self.move_cursor // 2) * 40))
+        info = (
+            ("属性/变化", "光照决定回复") if self.move_cursor == 0 else
+            ("属性/特殊", "光照决定威力") if self.move_cursor == 1 else
+            ("属性/物理", "震动后可以使用") if self.move_cursor == 2 else
+            ("属性/特殊", "温度决定属性")
+        )
+        for index, line in enumerate(info):
+            self.screen.blit(self.battle_small.render(line, False, (56, 56, 56)),
+                             (338, 236 + index * 36))
+
+    def draw_scripted_battle_menu(self):
+        battle = self.scripted_battle
+        if battle is None:
+            return
+        if self.battle_effect or battle.mode == "message":
+            overlay = self.battle_ui.get("message")
+            if overlay:
+                self.screen.blit(overlay, (0, 228))
+            else:
+                pygame.draw.rect(self.screen, (40, 56, 64), (0, 228, WIDTH, 92))
+            if self.battle_effect:
+                message = self.battle_effect["message"]
+            else:
+                speaker, body = self._split_dialogue(self.battle_message)
+                visible_body = body[:self.battle_message_reveal]
+                message = f"{speaker}：{visible_body}" if speaker else visible_body
+            self.draw_multiline(
+                18, 244, message, self.battle_font, (248, 248, 248), 444,
+                antialias=False,
+            )
+            _speaker, full_body = self._split_dialogue(self.battle_message)
+            if (not self.battle_effect and
+                    self.battle_message_reveal >= len(full_body)):
+                cursor = self.battle_ui.get("continue")
+                if cursor:
+                    bob = 2 if int(time.monotonic() * 4) % 2 else 0
+                    self.screen.blit(cursor, (444, 288 + bob))
+            return
+
+        move_list = self.battle_ui.get("fight")
+        move_info = self.battle_ui.get("move_info")
+        if move_list:
+            self.screen.blit(move_list, (0, 220))
+        else:
+            pygame.draw.rect(self.screen, (232, 232, 232), (0, 220, 318, 100))
+        if move_info:
+            self.screen.blit(move_info, (324, 220))
+        else:
+            pygame.draw.rect(self.screen, (232, 232, 232), (324, 220, 156, 100))
+        moves = battle.available_moves
+        self.move_cursor %= max(1, len(moves))
+        positions = ((28, 234), (174, 234), (28, 274), (174, 274))
+        for index, position in enumerate(positions):
+            label = battle.move_spec(moves[index])["name"] if index < len(moves) else "—"
+            font = self.battle_font if index < len(moves) else self.battle_small
+            color = (48, 48, 40) if index < len(moves) else (128, 128, 128)
+            self.screen.blit(font.render(label, False, color), position)
+        cursor = self.battle_ui.get("cursor")
+        if cursor:
+            cursor_x = 8 + (self.move_cursor % 2) * 146
+            cursor_y = 232 + (self.move_cursor // 2) * 40
+            self.screen.blit(cursor, (cursor_x, cursor_y))
+        selected = battle.move_spec(moves[self.move_cursor])
+        if battle.hint:
+            required = battle.move_spec(battle.required_move)["name"]
+            info = ("当前教学目标", f"请使用{required}")
+        else:
+            info = selected.get("info", [])
+        for index, line in enumerate(info[:2]):
+            self.screen.blit(
+                self.battle_small.render(str(line), False, (56, 56, 56)),
+                (338, 236 + index * 36),
+            )
 
     def blit_cover(self, image, target):
         """Scale a map or battle background without changing its aspect ratio."""
@@ -1765,7 +2242,8 @@ class Game:
             x, y, width, height = 28, 241, 424, 53
         self.draw_multiline(x, y, text, self.font, (38, 48, 54), width, height)
         full = self.dialogue[self.dialogue_index] if self.dialogue else ""
-        if self.dialogue_reveal >= len(full):
+        _speaker, full_message = self._split_dialogue(full)
+        if self.dialogue_reveal >= len(full_message):
             tip_x = 386 if center_box else 440
             tip_y = 184 if center_box else 282
             pygame.draw.polygon(
@@ -1788,7 +2266,7 @@ class Game:
         pygame.draw.rect(self.screen, (212, 185, 101), box, 1, border_radius=3)
         self.screen.blit(self.small.render(text, True, (249, 238, 181)), (box.x + 8, box.y + 7))
 
-    def draw_multiline(self, x, y, text, font, color, max_width, max_height=None):
+    def draw_multiline(self, x, y, text, font, color, max_width, max_height=None, antialias=True):
         line, lines = "", []
         for paragraph in text.split("\n"):
             for char in paragraph:
@@ -1802,7 +2280,7 @@ class Game:
         for i, value in enumerate(lines):
             if max_height is not None and (i + 1) * line_height > max_height:
                 break
-            self.screen.blit(font.render(value, True, color), (x, y + i * line_height))
+            self.screen.blit(font.render(value, antialias, color), (x, y + i * line_height))
 
 
 if __name__ == "__main__":
