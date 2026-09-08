@@ -15,11 +15,17 @@ import random
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pygame
 
+from battle_demo import (
+    ENCOUNTERS,
+    EncounterBattleRules,
+    light_solar_power,
+    light_synthesis_percent,
+)
 from event_system import (
     ICON_DIR,
     PRELOAD_DIR,
@@ -245,6 +251,8 @@ class Game:
         self.event_battle_active = False
         self.event_battle_return: dict | None = None
         self.scripted_battle: GrotleTutorial | None = None
+        self.encounter_battle: dict | None = None
+        self.encounter_effect_actor: str | None = None
         self.map_event_icon_cache: dict[str, pygame.Surface | None] = {}
         self.dialogue_preload_cache: dict[str, pygame.Surface | None] = {}
         self.pos[:] = self.scene_start("home")
@@ -336,10 +344,24 @@ class Game:
         self.default_enemy_battle = self.enemy_battle
         grotle = self._load("resource/dialogue/pokemons/GROTLE.png")
         self.grotle_battle = grotle
+        self.encounter_enemy_sprites = {
+            key: self._load(f"resource/battle/pokemon/front/{key}.png")
+            for key in ENCOUNTERS
+        }
         self.battle_background = self._load("resource/battle/backgrounds/field_eve_bg.png")
         self.battle_bases = {
             "player": self._load("resource/battle/backgrounds/field_eve_base0.png"),
             "foe": self._load("resource/battle/backgrounds/field_eve_base1.png"),
+        }
+        self.default_battle_background = self.battle_background
+        self.default_battle_bases = dict(self.battle_bases)
+        self.encounter_arenas = {
+            key: {
+                "background": self._load(f"resource/battle/backgrounds/{spec.background}_bg.png"),
+                "player": self._load(f"resource/battle/backgrounds/{spec.background}_base0.png"),
+                "foe": self._load(f"resource/battle/backgrounds/{spec.background}_base1.png"),
+            }
+            for key, spec in ENCOUNTERS.items()
         }
         self.battle_ui = {
             "player_box": self._load("resource/battle/ui_gen3_2x/databox_player_2x.png"),
@@ -356,12 +378,18 @@ class Game:
         self.battle_effect_frames = {
             "synthesis": self._load_battle_effect_frames("synthesis_heal.png"),
             "solar": self._load_battle_effect_frames("solar_beam_core.png"),
+            "attack": self._load_battle_effect_frames("attack_basic.png"),
+            "tackle": self._load_battle_effect_frames("tackle.png"),
+            "rock": self._load_battle_effect_frames("rock_debris.png"),
             "heavy": self._load_battle_effect_frames("heavy_slam.png"),
             "weather": self._load_battle_effect_frames("weather_ball.png"),
         }
         self.battle_sounds = {
             "synthesis": self._load_battle_sound("synthesis_heal.ogg"),
             "solar": self._load_battle_sound("impact.ogg"),
+            "attack": self._load_battle_sound("../damage_normal.ogg"),
+            "tackle": self._load_battle_sound("../damage_normal.ogg"),
+            "rock": self._load_battle_sound("../damage_normal.ogg"),
             "heavy": self._load_battle_sound("heavy_slam.ogg"),
             "weather": self._load_battle_sound("weather_ball.ogg"),
         }
@@ -743,7 +771,11 @@ class Game:
                     self.vibration_count += 1
                     self.vibration()
                 elif event.key == pygame.K_z:
-                    self.use_field_heavy_slam()
+                    if self.scene == "battle":
+                        self.vibration_count += 1
+                        self.vibration()
+                    else:
+                        self.use_field_heavy_slam()
                 elif event.key == pygame.K_F1:
                     if self.map_view:
                         self.map_view = None
@@ -889,8 +921,29 @@ class Game:
                 and point in tile_map.blocked
                 and self.upper_tile_exists(tile_map, point))
 
+    @staticmethod
+    def break_rock_at(tile_map, point):
+        """Remove one upper-layer rock and its collision for this play session."""
+        x, y = point
+        if not (0 <= x < tile_map.width and 0 <= y < tile_map.height):
+            return False
+        if point not in tile_map.blocked or point not in tile_map.upper_tiles:
+            return False
+        tile_map.layer_surfaces["upper"].fill(
+            (0, 0, 0, 0), pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+        )
+        tile_map.layers["upper"][y][x] = pygame.Surface(
+            (TILE_SIZE, TILE_SIZE), pygame.SRCALPHA
+        )
+        tile_map.upper_tiles.discard(point)
+        tile_map.blocked.discard(point)
+        return True
+
     def use_field_heavy_slam(self):
         if self.step or self.field_attack or self.map_view not in self.CAVE_MAP_NAMES:
+            return False
+        if "heavy_slam_learned" not in self.story_flags:
+            self.show_toast("还没有学会场外招式“重磅冲撞”。", 1.8)
             return False
         tile_map = self.tile_maps[self.map_view]
         dx, dy = {
@@ -918,21 +971,16 @@ class Game:
             return
         attack["frame"] += 1
         if not attack["broken"] and attack["frame"] >= FIELD_ATTACK_WINDUP_FRAMES:
-            x, y = attack["target"]
             tile_map = attack["tile_map"]
-            tile_map.layer_surfaces["upper"].fill(
-                (0, 0, 0, 0),
-                pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
-            )
-            tile_map.layers["upper"][y][x] = pygame.Surface(
-                (TILE_SIZE, TILE_SIZE), pygame.SRCALPHA
-            )
-            tile_map.upper_tiles.discard((x, y))
-            tile_map.blocked.discard((x, y))
-            attack["broken"] = True
+            attack["broken"] = self.break_rock_at(tile_map, attack["target"])
         effect_frames = max(1, len(self.rock_break_frames)) * ROCK_FRAME_HOLD
         if attack["frame"] >= FIELD_ATTACK_WINDUP_FRAMES + effect_frames:
+            map_name = attack["tile_map"].name
+            target = attack["target"]
+            broken = attack["broken"]
             self.field_attack = None
+            if broken:
+                self.trigger_event_at("rock_break", map_name=map_name, position=target)
 
     def trigger_warp(self):
         if not self.map_view:
@@ -953,6 +1001,7 @@ class Game:
         self.warp_fade_frames = WARP_FADE_FRAMES
         if hasattr(self, "_map_camera"):
             del self._map_camera
+        self.trigger_event_at("warp_arrival")
         return True
 
     def update_warp_fade(self):
@@ -1024,10 +1073,13 @@ class Game:
                 return True
         return False
 
-    def trigger_event_at(self, trigger):
-        """Start an eligible event for the player's current map coordinate."""
-        map_name = self.map_view or self.scene
-        position = tuple(self.map_view_pos if self.map_view else self.pos)
+    def trigger_event_at(self, trigger, *, map_name=None, position=None):
+        """Start an eligible event at the current or explicitly supplied tile."""
+        map_name = map_name or self.map_view or self.scene
+        if position is None:
+            position = tuple(self.map_view_pos if self.map_view else self.pos)
+        else:
+            position = tuple(position)
         if self.active_map_event is not None:
             return False
         candidates = events_for_trigger(
@@ -1127,6 +1179,8 @@ class Game:
         self.battle_lost = False
         self.battle_effect = None
         self.scripted_battle = None
+        self.encounter_battle = None
+        self.encounter_effect_actor = None
 
     def resolve_event_actor(self, actor):
         actor = str(actor or "event")
@@ -1156,6 +1210,11 @@ class Game:
                     actor, tuple(self.active_map_event.get("position", player))
                 )
             action["to"] = tuple(step.get("position", action["from"]))
+        elif kind == "break_rock":
+            action["tile_map"] = self.tile_maps.get(self.map_view)
+            action["target"] = tuple(step.get("position", player))
+            action["broken"] = False
+            action["break_frame"] = min(total, FIELD_ATTACK_WINDUP_FRAMES)
         self.event_action = action
 
     def update_event_action(self):
@@ -1179,6 +1238,11 @@ class Game:
             )
             if action["actor"] != "player":
                 self.event_actor_positions[action["actor"]] = current
+        elif (action["type"] == "break_rock" and not action["broken"]
+              and action["frame"] >= action["break_frame"]):
+            tile_map = action.get("tile_map")
+            if tile_map:
+                action["broken"] = self.break_rock_at(tile_map, action["target"])
         if progress < 1.0:
             return
         step = action["step"]
@@ -1323,7 +1387,11 @@ class Game:
         self.battle_message_reveal = 0
         self.battle_message_tick = 0
         self.scripted_battle = None
+        self.encounter_battle = None
+        self.encounter_effect_actor = None
         self.enemy_battle = self.default_enemy_battle
+        self.battle_background = self.default_battle_background
+        self.battle_bases = dict(self.default_battle_bases)
         self.set_battle_notice("青梅派出了种子铁球！", 2.4)
 
     def start_event_battle(self, battle_id):
@@ -1350,6 +1418,32 @@ class Game:
             self.battle_notice = ""
             self.battle_notice_until = 0.0
             self.sync_scripted_battle_message(force=True)
+        elif battle_id in ENCOUNTERS:
+            spec = ENCOUNTERS[battle_id]
+            rules = EncounterBattleRules(spec)
+            opening_messages = (f"{spec.enemy_name}想要对战！", *spec.opening_notes)
+            self.encounter_battle = {
+                "spec": spec,
+                "rules": rules,
+                "stage": "intro",
+                "message": opening_messages[0],
+                "opening_messages": opening_messages,
+                "opening_index": 0,
+                "selected_move": None,
+                "foe_move": None,
+            }
+            self.player_hp = rules.player_hp
+            self.enemy_hp = rules.foe_hp
+            self.enemy_battle = self.encounter_enemy_sprites.get(battle_id) or self.default_enemy_battle
+            arena = self.encounter_arenas[battle_id]
+            self.battle_background = arena["background"] or self.default_battle_background
+            self.battle_bases = {
+                "player": arena["player"] or self.default_battle_bases["player"],
+                "foe": arena["foe"] or self.default_battle_bases["foe"],
+            }
+            self.battle_notice = ""
+            self.battle_notice_until = 0.0
+            self.sync_encounter_message(force=True)
         else:
             self.set_battle_notice(f"事件战斗 [{battle_id}]：当前使用训练战占位。", 2.4)
 
@@ -1378,6 +1472,8 @@ class Game:
         self.battle_lost = False
         self.battle_effect = None
         self.scripted_battle = None
+        self.encounter_battle = None
+        self.encounter_effect_actor = None
         self.restore_event_battle_return()
         self.active_map_event_step += 1
         self.run_map_event_step()
@@ -1401,6 +1497,8 @@ class Game:
         self.battle_lost = False
         self.battle_effect = None
         self.scripted_battle = None
+        self.encounter_battle = None
+        self.encounter_effect_actor = None
         self.event_battle_return = None
         self.active_map_event_step = 0
         self.run_map_event_step()
@@ -1410,6 +1508,9 @@ class Game:
             return
         if self.scripted_battle:
             self.scripted_battle_command(command)
+            return
+        if self.encounter_battle:
+            self.encounter_battle_command(command)
             return
         if self.battle_won:
             if command == 5:
@@ -1477,6 +1578,159 @@ class Game:
             self.enemy_hp = battle.foe_hp
             self.sync_scripted_battle_message()
 
+    def encounter_player_moves(self):
+        encounter = self.encounter_battle
+        if not encounter:
+            return ()
+        moves = []
+        for move in encounter["spec"].player_moves:
+            if move.effect == "solar":
+                power = light_solar_power(self.light)
+                move = replace(
+                    move,
+                    value_label=f"威力：{power}",
+                    damage=max(1, round(move.damage * power / 70)),
+                )
+            elif move.effect == "synthesis":
+                percent = light_synthesis_percent(self.light)
+                move = replace(move, value_label=f"回复量：{percent}%", heal_percent=percent)
+            moves.append(move)
+        return tuple(moves)
+
+    def encounter_battle_command(self, command):
+        encounter = self.encounter_battle
+        if not encounter:
+            return
+        stage = encounter["stage"]
+        if stage == "menu":
+            moves = self.encounter_player_moves()
+            if command in (1, 3):
+                self.move_cursor = (self.move_cursor - 1) % len(moves)
+            elif command in (2, 4):
+                self.move_cursor = (self.move_cursor + 1) % len(moves)
+            elif command == 5:
+                move = moves[self.move_cursor]
+                if move.trigger == "vibration":
+                    self.show_toast("选中重磅冲撞后，请敲击小板或按 Z。", 2.0)
+                else:
+                    self.select_encounter_move(move)
+            return
+        if command != 5:
+            return
+        self.sync_encounter_message()
+        _speaker, message = self._split_dialogue(self.battle_message)
+        if self.battle_message_reveal < len(message):
+            self.battle_message_reveal = len(message)
+            return
+        if stage == "intro":
+            encounter["opening_index"] += 1
+            index = encounter["opening_index"]
+            if index < len(encounter["opening_messages"]):
+                encounter["message"] = encounter["opening_messages"][index]
+                self.sync_encounter_message(force=True)
+            else:
+                encounter["stage"] = "menu"
+                encounter["message"] = ""
+                self.battle_message = ""
+        elif stage == "player_announce":
+            self.begin_encounter_player_action()
+        elif stage == "foe_announce":
+            self.begin_encounter_foe_action()
+        elif stage == "won":
+            self.finish_event_battle()
+        elif stage == "lost":
+            self.restart_map_event_after_defeat()
+
+    def select_encounter_move(self, move):
+        encounter = self.encounter_battle
+        if not encounter:
+            return False
+        encounter["selected_move"] = move
+        encounter["stage"] = "player_announce"
+        encounter["message"] = f"坚果哑铃使出了{move.name}！"
+        self.sync_encounter_message(force=True)
+        return True
+
+    def encounter_battle_vibration(self):
+        encounter = self.encounter_battle
+        if not encounter or encounter["stage"] != "menu":
+            return False
+        moves = self.encounter_player_moves()
+        move = moves[self.move_cursor % len(moves)]
+        if move.trigger != "vibration":
+            self.show_toast("当前选中的技能不需要振动触发。", 1.5)
+            return False
+        return self.select_encounter_move(move)
+
+    def begin_encounter_player_action(self):
+        encounter = self.encounter_battle
+        if not encounter:
+            return
+        rules = encounter["rules"]
+        move = encounter["selected_move"]
+        old_player, old_foe = rules.player_hp, rules.foe_hp
+        rules.use_player_move(move)
+        target = "player" if move.heal_percent else "foe"
+        transition = (
+            ("player", old_player, rules.player_hp)
+            if target == "player" else ("foe", old_foe, rules.foe_hp)
+        )
+        encounter["stage"] = "player_action"
+        self.encounter_effect_actor = "player"
+        self.begin_battle_effect(move.effect, encounter["message"], target, transition)
+
+    def begin_encounter_foe_action(self):
+        encounter = self.encounter_battle
+        if not encounter:
+            return
+        rules = encounter["rules"]
+        move = encounter["foe_move"]
+        old_hp = rules.player_hp
+        rules.use_foe_move(move)
+        encounter["stage"] = "foe_action"
+        self.encounter_effect_actor = "foe"
+        self.begin_battle_effect(
+            move.effect, encounter["message"], "player",
+            ("player", old_hp, rules.player_hp),
+        )
+
+    def finish_encounter_effect(self):
+        encounter = self.encounter_battle
+        actor = self.encounter_effect_actor
+        if not encounter or not actor:
+            return
+        self.encounter_effect_actor = None
+        rules = encounter["rules"]
+        self.player_hp = rules.player_hp
+        self.enemy_hp = rules.foe_hp
+        if actor == "player":
+            if rules.foe_hp <= 0:
+                encounter["stage"] = "won"
+                encounter["message"] = f"{encounter['spec'].enemy_name}倒下了！"
+                self.battle_won = True
+            else:
+                move = random.choice(encounter["spec"].foe_moves)
+                encounter["foe_move"] = move
+                encounter["stage"] = "foe_announce"
+                encounter["message"] = f"{encounter['spec'].enemy_name}使出了{move.name}！"
+        elif rules.player_hp <= 0:
+            encounter["stage"] = "lost"
+            encounter["message"] = "坚果哑铃倒下了！"
+            self.battle_lost = True
+        else:
+            encounter["stage"] = "menu"
+            encounter["message"] = ""
+        self.sync_encounter_message(force=True)
+
+    def sync_encounter_message(self, force=False):
+        if not self.encounter_battle:
+            return
+        message = self.encounter_battle.get("message", "")
+        if force or message != self.battle_message:
+            self.battle_message = message
+            self.battle_message_reveal = 0
+            self.battle_message_tick = 0
+
     def sync_scripted_battle_message(self, force=False):
         if not self.scripted_battle:
             return
@@ -1487,11 +1741,18 @@ class Game:
             self.battle_message_tick = 0
 
     def update_battle_message_reveal(self):
-        if self.scene != "battle" or not self.scripted_battle or self.battle_effect:
+        if self.scene != "battle" or self.battle_effect:
             return
-        self.sync_scripted_battle_message()
+        if self.scripted_battle:
+            self.sync_scripted_battle_message()
+            message_mode = self.scripted_battle.mode == "message"
+        elif self.encounter_battle:
+            self.sync_encounter_message()
+            message_mode = self.encounter_battle["stage"] != "menu"
+        else:
+            return
         _speaker, message = self._split_dialogue(self.battle_message)
-        if self.scripted_battle.mode != "message" or self.battle_message_reveal >= len(message):
+        if not message_mode or self.battle_message_reveal >= len(message):
             return
         self.battle_message_tick += 1
         if self.battle_message_tick >= DIALOGUE_CHAR_FRAMES:
@@ -1547,7 +1808,7 @@ class Game:
             "target": target or ("player" if effect == "synthesis" else "foe"),
             "hp_transition": hp_transition,
         }
-        if self.scripted_battle:
+        if self.scripted_battle or self.encounter_battle:
             self.battle_message = message
             self.battle_message_reveal = len(message)
             self.battle_message_tick = 0
@@ -1577,9 +1838,15 @@ class Game:
                 self.battle_won = self.scripted_battle.outcome == "won"
                 self.battle_lost = self.scripted_battle.outcome == "lost"
                 self.sync_scripted_battle_message(force=True)
+            elif self.encounter_battle and self.encounter_effect_actor:
+                self.finish_encounter_effect()
 
     def vibration(self):
-        if self.scene == "cave3" and self.adjacent(self.pos, self.ROCK_POS) and not self.rock_broken:
+        if self.map_view:
+            self.use_field_heavy_slam()
+        elif self.scene == "battle" and self.encounter_battle:
+            self.encounter_battle_vibration()
+        elif self.scene == "cave3" and self.adjacent(self.pos, self.ROCK_POS) and not self.rock_broken:
             self.rock_broken = True
             self.show_toast("重磅冲撞！岩石被击碎，通道打开了。", 3)
         elif self.scene == "battle":
@@ -1631,6 +1898,8 @@ class Game:
         self.event_battle_active = False
         self.event_battle_return = None
         self.scripted_battle = None
+        self.encounter_battle = None
+        self.encounter_effect_actor = None
         self.meteor_phase = 0
         self.player_hp, self.enemy_hp = 100, 100
         self.show_toast("回到父亲的家。靠近左上角父亲并按 Enter。", 3)
@@ -1897,9 +2166,11 @@ class Game:
 
     def draw_rock_break(self, camera_x, camera_y, origin_x=0, origin_y=0):
         attack = self.field_attack
+        if not attack and self.event_action and self.event_action.get("type") == "break_rock":
+            attack = self.event_action
         if not attack or not attack["broken"] or not self.rock_break_frames:
             return
-        elapsed = attack["frame"] - FIELD_ATTACK_WINDUP_FRAMES
+        elapsed = attack["frame"] - attack.get("break_frame", FIELD_ATTACK_WINDUP_FRAMES)
         frame_index = min(len(self.rock_break_frames) - 1, elapsed // ROCK_FRAME_HOLD)
         x, y = attack["target"]
         self.screen.blit(
@@ -1981,15 +2252,19 @@ class Game:
             self.screen.blit(foe_box, (6, 8))
         if player_box:
             self.screen.blit(player_box, (280, 146))
-        foe_name = (
-            self.scripted_battle.config["opponent"]["name"]
-            if self.scripted_battle else "青梅的种子铁球"
-        )
+        if self.scripted_battle:
+            foe_name = self.scripted_battle.config["opponent"]["name"]
+            foe_max = self.scripted_battle.foe_max_hp
+            player_max = self.scripted_battle.player_max_hp
+        elif self.encounter_battle:
+            foe_name = self.encounter_battle["spec"].enemy_name
+            foe_max = self.encounter_battle["rules"].foe_max_hp
+            player_max = self.encounter_battle["rules"].player_max_hp
+        else:
+            foe_name, foe_max, player_max = "青梅的种子铁球", 100, 100
         text_color = (48, 48, 40)
         self.screen.blit(self.battle_font.render(foe_name, False, text_color), (18, 18))
         self.screen.blit(self.battle_font.render("坚果哑铃", False, text_color), (292, 156))
-        foe_max = self.scripted_battle.foe_max_hp if self.scripted_battle else 100
-        player_max = self.scripted_battle.player_max_hp if self.scripted_battle else 100
         self.draw_gen3_hp_bar("foe", self.enemy_hp, foe_max)
         self.draw_gen3_hp_bar("player", self.player_hp, player_max)
         hp_text = f"{round(self.player_hp)}/{player_max}"
@@ -2019,6 +2294,9 @@ class Game:
     def draw_battle_menu(self):
         if self.scripted_battle:
             self.draw_scripted_battle_menu()
+            return
+        if self.encounter_battle:
+            self.draw_encounter_battle_menu()
             return
         message_active = self.battle_effect or time.monotonic() < self.battle_notice_until
         if message_active:
@@ -2124,6 +2402,69 @@ class Game:
                 self.battle_small.render(str(line), False, (56, 56, 56)),
                 (338, 236 + index * 36),
             )
+
+    def draw_encounter_battle_menu(self):
+        encounter = self.encounter_battle
+        if not encounter:
+            return
+        if self.battle_effect or encounter["stage"] != "menu":
+            panel = self.battle_ui.get("message")
+            if panel:
+                self.screen.blit(panel, (0, 228))
+            else:
+                pygame.draw.rect(self.screen, (40, 56, 64), (0, 228, WIDTH, 92))
+            if self.battle_effect:
+                message = self.battle_effect["message"]
+            else:
+                speaker, body = self._split_dialogue(self.battle_message)
+                visible = body[:self.battle_message_reveal]
+                message = f"{speaker}：{visible}" if speaker else visible
+            self.draw_multiline(
+                18, 244, message, self.battle_font, (248, 248, 248), 444,
+                antialias=False,
+            )
+            _speaker, full_body = self._split_dialogue(self.battle_message)
+            if (not self.battle_effect and
+                    self.battle_message_reveal >= len(full_body)):
+                cursor = self.battle_ui.get("continue")
+                if cursor:
+                    bob = 2 if int(time.monotonic() * 4) % 2 else 0
+                    self.screen.blit(cursor, (444, 288 + bob))
+            return
+
+        move_list = self.battle_ui.get("fight")
+        move_info = self.battle_ui.get("move_info")
+        if move_list:
+            self.screen.blit(move_list, (0, 220))
+        if move_info:
+            self.screen.blit(move_info, (324, 220))
+        moves = self.encounter_player_moves()
+        self.move_cursor %= len(moves)
+        positions = ((28, 234), (174, 234), (28, 274), (174, 274))
+        for index, position in enumerate(positions):
+            label = moves[index].name if index < len(moves) else "—"
+            font = self.battle_font if index < len(moves) else self.battle_small
+            color = (48, 48, 40) if index < len(moves) else (128, 128, 128)
+            self.screen.blit(font.render(label, False, color), position)
+        cursor = self.battle_ui.get("cursor")
+        if cursor:
+            self.screen.blit(
+                cursor,
+                (8 + (self.move_cursor % 2) * 146, 232 + (self.move_cursor // 2) * 40),
+            )
+        move = moves[self.move_cursor]
+        info = move.info_lines or (f"属性/{move.category}", move.value_label)
+        for index, line in enumerate(info[:2]):
+            self.screen.blit(
+                self.battle_small.render(str(line), False, (56, 56, 56)),
+                (338, 236 + index * 36),
+            )
+        sensor = (
+            f"光照原始值：{0 if self.light is None else self.light}  "
+            f"日光束：{light_solar_power(self.light)}  "
+            f"光合作用：{light_synthesis_percent(self.light)}%"
+        )
+        self.screen.blit(self.battle_small.render(sensor, False, (56, 56, 56)), (18, 204))
 
     def blit_cover(self, image, target):
         """Scale a map or battle background without changing its aspect ratio."""
@@ -2257,7 +2598,9 @@ class Game:
         separator = "：" if "：" in text else (":" if ":" in text else None)
         if separator:
             speaker, message = text.split(separator, 1)
-            return speaker.strip(), message.strip()
+            speaker = speaker.strip()
+            if 0 < len(speaker) <= 12 and "\n" not in speaker:
+                return speaker, message.strip()
         return "", text
 
     def draw_toast(self, text):

@@ -192,7 +192,8 @@ class EventEditor(tk.Tk):
         ttk.Label(meta, text="触发方式").grid(row=1, column=0, sticky="w", pady=(7, 0))
         trigger_box = ttk.Combobox(
             meta, textvariable=self.event_trigger,
-            values=("step", "game_start", "warp_attempt"), state="readonly", width=18,
+            values=("step", "game_start", "warp_attempt", "warp_arrival", "rock_break"),
+            state="readonly", width=18,
         )
         trigger_box.grid(row=1, column=1, sticky="ew", padx=4, pady=(7, 0))
         ttk.Label(meta, text="必须标记").grid(row=1, column=2, sticky="w", padx=(10, 0), pady=(7, 0))
@@ -251,7 +252,8 @@ class EventEditor(tk.Tk):
         type_box = ttk.Combobox(
             form, textvariable=self.step_type,
             values=("dialogue", "battle", "toast", "set_flag", "wait", "camera_pan",
-                    "camera_shake", "play_animation", "actor_move", "actor_visibility"),
+                    "camera_shake", "play_animation", "actor_move", "actor_visibility",
+                    "break_rock"),
             state="readonly", width=16,
         )
         type_box.grid(row=0, column=1, sticky="w")
@@ -537,7 +539,7 @@ class EventEditor(tk.Tk):
                 label = f"{index}. {step_type} {detail[:28]}"
             elif step_type == "set_flag":
                 label = f"{index}. 设置标记 {step.get('flag')}={step.get('value', True)}"
-            elif step_type in {"camera_pan", "actor_move"}:
+            elif step_type in {"camera_pan", "actor_move", "break_rock"}:
                 label = f"{index}. {step_type} -> {step.get('position')} ({step.get('duration_ms')} ms)"
             elif step_type == "play_animation":
                 label = f"{index}. 动画 {step.get('animation')} @ {step.get('position')}"
@@ -619,6 +621,12 @@ class EventEditor(tk.Tk):
                 "type": "actor_visibility", "actor": self.step_actor.get().strip() or "event",
                 "visible": self.step_visible.get(),
             }
+        if step_type == "break_rock":
+            return {
+                "type": "break_rock",
+                "position": [self.step_x.get(), self.step_y.get()],
+                "duration_ms": self.step_duration.get(),
+            }
         text = self.text_editor.get("1.0", "end-1c").strip()
         if not text:
             messagebox.showwarning("缺少文本", "请先输入文本内容。")
@@ -696,11 +704,16 @@ class EventEditor(tk.Tk):
         self.text_editor.configure(state="normal" if text_enabled else "disabled")
         self.battle_entry.configure(state="readonly" if step_type == "battle" else "disabled")
         self.value_entry.configure(state="normal" if step_type in {"set_flag", "play_animation"} else "disabled")
-        position_state = "normal" if step_type in {"camera_pan", "play_animation", "actor_move"} else "disabled"
+        position_state = "normal" if step_type in {
+            "camera_pan", "play_animation", "actor_move", "break_rock"
+        } else "disabled"
         self.step_x_box.configure(state=position_state)
         self.step_y_box.configure(state=position_state)
         self.duration_box.configure(
-            state="normal" if step_type in {"toast", "wait", "camera_pan", "camera_shake", "play_animation", "actor_move"}
+            state="normal" if step_type in {
+                "toast", "wait", "camera_pan", "camera_shake", "play_animation",
+                "actor_move", "break_rock",
+            }
             else "disabled"
         )
         self.actor_entry.configure(state="normal" if step_type in {"actor_move", "actor_visibility"} else "disabled")

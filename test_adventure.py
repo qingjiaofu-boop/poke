@@ -130,7 +130,8 @@ def test_battle_assets_and_sensor_moves():
         assert game.battle_ui["fight"].get_size() == (318, 100)
         assert game.battle_ui["move_info"].get_size() == (156, 100)
         assert all(game.battle_effect_frames[name]
-                   for name in ("synthesis", "solar", "heavy", "weather"))
+                   for name in ("synthesis", "solar", "attack", "tackle", "rock",
+                                "heavy", "weather"))
 
         game.light = 0
         game.use_move(1)
@@ -234,6 +235,8 @@ def test_breakable_cave_rocks():
         )
         game.map_view_pos[:] = player
         game.facing = facing
+        assert not game.use_field_heavy_slam()
+        game.story_flags.add("heavy_slam_learned")
         assert game.is_breakable_rock(tile_map, target)
         assert game.use_field_heavy_slam()
         assert len(game.rock_break_frames) == 16
@@ -356,6 +359,115 @@ def test_bidirectional_warps():
         pygame.quit()
 
 
+def test_embedded_zubat_event_battle_starts_real_encounter():
+    game = Adventure(None)
+    try:
+        game.start_event_battle("zubat")
+        assert game.encounter_battle is not None
+        assert game.encounter_battle["spec"].enemy_name == "超音蝠"
+        assert game.enemy_hp == 90
+        assert game.player_hp == 149
+
+        game.battle_message_reveal = len(game.battle_message)
+        game.command(5)
+        assert game.encounter_battle["stage"] == "menu"
+        game.light = 0
+        game.command(5)
+        assert game.encounter_battle["stage"] == "player_announce"
+        game.battle_message_reveal = len(game.battle_message)
+        game.command(5)
+        assert game.battle_effect is not None
+        for _ in range(120):
+            game.update_battle_effect()
+            if game.battle_effect is None:
+                break
+        assert game.enemy_hp == 70
+        assert game.encounter_battle["stage"] == "foe_announce"
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
+def test_aron_story_break_reward_and_warp_gate():
+    game = Adventure(None)
+    try:
+        cave = game.tile_maps["caveB2f"]
+        assert game.is_breakable_rock(cave, (15, 11))
+        assert game.is_breakable_rock(cave, (15, 5))
+
+        game.start_event_battle("aron")
+        assert game.encounter_battle["spec"].enemy_name == "可可多拉"
+        assert game.enemy_hp == 176
+        game.restore_event_battle_return()
+        game.scene = "home"
+        game.map_view = "caveB2f"
+
+        encounter = next(event for event in game.map_events if event["id"] == "aron_encounter")
+        break_index = next(
+            index for index, step in enumerate(encounter["steps"])
+            if step["type"] == "break_rock"
+        )
+        game.active_map_event = encounter
+        game.active_map_event_step = break_index
+        game.run_map_event_step()
+        while game.event_action:
+            game.update_event_action()
+        assert (15, 11) not in cave.blocked
+        assert not game.upper_tile_exists(cave, (15, 11))
+
+        game.finish_map_event()
+        game.story_flags.update({"heavy_slam_learned", "aron_gift_search_started"})
+        assert game.trigger_event_at(
+            "rock_break", map_name="caveB2f", position=(15, 5)
+        )
+        assert game.active_map_event["id"] == "aron_comet_pendant"
+
+        game.finish_map_event()
+        game.map_view_pos[:] = (34, 7)
+        assert game.trigger_warp()
+        assert game.map_view == "caveB2f"
+        assert game.active_map_event["id"] == "aron_gift_gate"
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
+def test_sableye_warp_arrival_and_vibration_move():
+    game = Adventure(None)
+    try:
+        game.story_flags.update({"comet_pendant_obtained", "heavy_slam_learned"})
+        game.map_view = "caveB2f"
+        game.map_view_pos[:] = (34, 7)
+        assert game.trigger_warp()
+        assert game.map_view == "caveB1F"
+        assert tuple(game.map_view_pos) == (28, 7)
+        assert game.active_map_event["id"] == "sableye_encounter"
+
+        game.start_event_battle("sableye")
+        encounter = game.encounter_battle
+        assert encounter["spec"].enemy_name == "勾魂眼"
+        assert encounter["rules"].foe_max_hp == 148
+        assert len(encounter["opening_messages"]) == 3
+        for expected_index in (1, 2):
+            game.battle_message_reveal = len(game.battle_message)
+            game.command(5)
+            assert encounter["stage"] == "intro"
+            assert encounter["opening_index"] == expected_index
+        game.battle_message_reveal = len(game.battle_message)
+        game.command(5)
+        assert encounter["stage"] == "menu"
+
+        game.move_cursor = 2
+        game.command(5)
+        assert encounter["stage"] == "menu"
+        game.command(9)
+        assert encounter["stage"] == "player_announce"
+        assert encounter["selected_move"].name == "重磅冲撞"
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
 def test_ordered_map_event_dialogue_battle_and_once():
     game = Adventure(None)
     try:
@@ -432,6 +544,9 @@ if __name__ == "__main__":
     test_tile_map_loading_and_view_switching()
     test_npc_collision_and_step_events()
     test_battle_assets_and_sensor_moves()
+    test_embedded_zubat_event_battle_starts_real_encounter()
+    test_aron_story_break_reward_and_warp_gate()
+    test_sableye_warp_arrival_and_vibration_move()
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
     test_bidirectional_warps()

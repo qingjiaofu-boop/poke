@@ -16,7 +16,9 @@ PRELOAD_DIR = ASSETS / "resource" / "dialogue" / "preloads"
 ICON_DIR = ASSETS / "resource" / "event" / "icon"
 
 EVENT_VERSION = 2
-TRIGGER_TYPES = frozenset({"step", "game_start", "warp_attempt"})
+TRIGGER_TYPES = frozenset({
+    "step", "game_start", "warp_attempt", "warp_arrival", "rock_break",
+})
 STEP_TYPES = frozenset({
     "dialogue",
     "battle",
@@ -28,6 +30,7 @@ STEP_TYPES = frozenset({
     "play_animation",
     "actor_move",
     "actor_visibility",
+    "break_rock",
 })
 
 
@@ -141,6 +144,12 @@ def normalize_step(raw: object) -> dict | None:
             "type": "actor_visibility",
             "actor": _slug(str(raw.get("actor", "event"))),
             "visible": bool(raw.get("visible", True)),
+        }
+    if step_type == "break_rock":
+        return {
+            "type": "break_rock",
+            "position": _position(raw.get("position", [0, 0])),
+            "duration_ms": _duration(raw.get("duration_ms"), 500),
         }
     text = str(raw.get("text", "")).strip()
     return {
