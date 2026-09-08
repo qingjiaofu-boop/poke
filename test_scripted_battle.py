@@ -65,6 +65,14 @@ def test_free_battle_can_lose_and_reset():
     assert tutorial.player_hp == tutorial.player_max_hp
 
 
+def test_light_values_use_latest_adc_and_default_to_midpoint():
+    tutorial = GrotleTutorial()
+    assert tutorial.light_values(None) == (45, 50)
+    assert tutorial.light_values(0) == (34, 40)
+    assert tutorial.light_values(1023) == (55, 60)
+    assert tutorial.light_values(2048) == (55, 60)
+
+
 if __name__ == "__main__":
     test_tutorial_unlock_order_and_sensor_ranges()
     test_free_battle_can_win_and_reports_outcome()

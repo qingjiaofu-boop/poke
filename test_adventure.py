@@ -8,6 +8,15 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame
 
 from adventure import Adventure
+from essentials_adventure import STCProtocolParser
+
+
+def test_stc_sensor_payload_bytes_are_not_reparsed_as_headers():
+    parser = STCProtocolParser()
+    events = parser.feed(bytes((0x40, 0x40, 0x41)))
+    assert events == [("sensor", 0, 0x4041)]
+    events = parser.feed(bytes((0x41, 0x40, 0x40)))
+    assert events == [("sensor", 1, 0x4040)]
 
 
 def advance_dialogue(game):

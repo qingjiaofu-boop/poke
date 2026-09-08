@@ -35,6 +35,8 @@ class SerialBridge:
         self.thread = None
         self.stop = threading.Event()
         self.status = "键盘演示模式"
+        self.sensor_type = None
+        self.high = None
 
     def start(self):
         if not self.port:
@@ -50,26 +52,25 @@ class SerialBridge:
             return
 
         def read_loop():
-            sensor_type = None
-            high = None
             while not self.stop.is_set():
-                data = link.read(1)
+                data = link.read(64)
                 if not data:
                     continue
-                value = data[0]
-                if value in (0x40, 0x41):
-                    sensor_type = value - 0x40
-                    high = None
-                elif sensor_type is not None:
-                    if high is None:
-                        high = value
+                for value in data:
+                    if self.sensor_type is None:
+                        if value in (0x40, 0x41):
+                            self.sensor_type = value - 0x40
+                        elif value == 0x09:
+                            self.on_command(("vibration",))
+                        else:
+                            self.on_command(("key", value))
+                    elif self.high is None:
+                        self.high = value
                     else:
-                        self.on_command(("sensor", sensor_type, (high << 8) | value))
-                        sensor_type = None
-                elif value == 0x09:
-                    self.on_command(("vibration",))
-                else:
-                    self.on_command(("key", value))
+                        self.on_command(("sensor", self.sensor_type,
+                                         (self.high << 8) | value))
+                        self.sensor_type = None
+                        self.high = None
             link.close()
 
         self.thread = threading.Thread(target=read_loop, daemon=True)

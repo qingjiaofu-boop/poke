@@ -95,7 +95,7 @@ class STCSerialBridge:
         while not self.stop.is_set() and self.link:
             data = self.link.read(64)
             for value in data:
-                if value in (STC_LIGHT_MARKER, STC_TEMPERATURE_MARKER):
+                if self.marker is None and value in (STC_LIGHT_MARKER, STC_TEMPERATURE_MARKER):
                     self.marker, self.high = value, None
                 elif self.marker is not None:
                     if self.high is None:
