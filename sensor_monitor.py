@@ -52,7 +52,7 @@ class ProtocolParser:
         events: list[RawEvent] = []
         now = time.time()
         for value in data:
-            if value in (0x40, 0x41):
+            if self.sensor_marker is None and value in (0x40, 0x41):
                 self.sensor_marker = value
                 self.high = None
                 continue

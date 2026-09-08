@@ -1,6 +1,7 @@
 import unittest
 
 from sensor_monitor import ProtocolParser
+from essentials_adventure import STCProtocolParser
 
 
 class ProtocolParserTests(unittest.TestCase):
@@ -22,6 +23,13 @@ class ProtocolParserTests(unittest.TestCase):
         self.assertEqual(parser.feed(bytes((0x40, 0x02))), [])
         events = parser.feed(bytes((0x01,)))
         self.assertEqual(events[0].value, 513)
+
+    def test_adventure_parser_keeps_header_values_inside_payload(self):
+        parser = STCProtocolParser()
+        self.assertEqual(parser.feed(bytes((0x40, 0x40, 0x41))),
+                         [("sensor", 0, 0x4041)])
+        self.assertEqual(parser.feed(bytes((0x41, 0x40, 0x40))),
+                         [("sensor", 1, 0x4040)])
 
 
 if __name__ == "__main__":

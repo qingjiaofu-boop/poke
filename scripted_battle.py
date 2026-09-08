@@ -86,6 +86,15 @@ class GrotleTutorial:
         value = 512 if light is None else max(0, min(1023, int(light)))
         return low + round((high - low) * value / 1023)
 
+    def light_values(self, light: int | None) -> tuple[int, int]:
+        """Return the current solar-beam damage and synthesis HP recovery."""
+        solar = self.move_spec("solar_beam")
+        synthesis = self.move_spec("synthesis")
+        return (
+            self._sensor_value(light, int(solar["damage_min"]), int(solar["damage_max"])),
+            self._sensor_value(light, int(synthesis["heal_min"]), int(synthesis["heal_max"])),
+        )
+
     def confirm(self) -> BattleAction | None:
         self.hint = None
         transitions = {

@@ -92,12 +92,40 @@ class TileMap:
         return self.size[1]
 
 
+class STCProtocolParser:
+    """Parse 0x40/0x41 sensor frames without treating payload as headers."""
+
+    def __init__(self):
+        self.sensor_kind = None
+        self.high = None
+
+    def feed(self, data):
+        events = []
+        for value in data:
+            if self.sensor_kind is None:
+                if value in (0x40, 0x41):
+                    self.sensor_kind = value - 0x40
+                elif value == 0x09:
+                    events.append(("vibration",))
+                else:
+                    events.append(("key", value))
+                continue
+            if self.high is None:
+                self.high = value
+                continue
+            events.append(("sensor", self.sensor_kind, (self.high << 8) | value))
+            self.sensor_kind = None
+            self.high = None
+        return events
+
+
 class SerialBridge:
     def __init__(self, port: str | None, events: queue.Queue):
         self.port = port
         self.events = events
         self.stop = threading.Event()
         self.status = "键盘演示模式"
+        self.parser = STCProtocolParser()
 
     def start(self):
         if not self.port:
@@ -113,26 +141,12 @@ class SerialBridge:
         self.status = f"串口已连接：{self.port}"
 
         def read_loop():
-            sensor_kind = None
-            high = None
             while not self.stop.is_set():
-                raw = link.read(1)
-                if not raw:
+                data = link.read(64)
+                if not data:
                     continue
-                value = raw[0]
-                if value in (0x40, 0x41):
-                    sensor_kind = value - 0x40
-                    high = None
-                elif sensor_kind is not None:
-                    if high is None:
-                        high = value
-                    else:
-                        self.events.put(("sensor", sensor_kind, (high << 8) | value))
-                        sensor_kind = None
-                elif value == 0x09:
-                    self.events.put(("vibration",))
-                else:
-                    self.events.put(("key", value))
+                for event in self.parser.feed(data):
+                    self.events.put(event)
             link.close()
 
         threading.Thread(target=read_loop, daemon=True).start()
@@ -2118,7 +2132,14 @@ class Game:
             required = battle.move_spec(battle.required_move)["name"]
             info = ("当前教学目标", f"请使用{required}")
         else:
-            info = selected.get("info", [])
+            solar_damage, synthesis_heal = battle.light_values(self.light)
+            light = 512 if self.light is None else max(0, min(1023, int(self.light)))
+            if moves[self.move_cursor] == "solar_beam":
+                info = ["属性/特殊", f"当前威力：{solar_damage}  (ADC {light})"]
+            elif moves[self.move_cursor] == "synthesis":
+                info = ["属性/变化", f"当前回复：{synthesis_heal} HP  (ADC {light})"]
+            else:
+                info = list(selected.get("info", []))
         for index, line in enumerate(info[:2]):
             self.screen.blit(
                 self.battle_small.render(str(line), False, (56, 56, 56)),
