@@ -222,32 +222,963 @@
       ]
     },
     {
-      "id": "new_event",
-      "name": "jrc",
+      "id": "zubat_encounter",
+      "name": "矿洞入口遇见超音蝠",
       "trigger": "step",
-      "map": "finalcave",
+      "map": "grancave",
       "position": [
-        7,
-        6
+        17,
+        5
       ],
-      "icon": "jirachi_sleep_3.png",
+      "icon": "zubat.png",
       "once": true,
       "conditions": {
         "all": [],
-        "none": []
+        "none": [
+          "zubat_befriended"
+        ]
       },
       "steps": [
         {
           "type": "dialogue",
-          "preload": "ferrothorn_left.png",
-          "speaker": "坚果哑铃",
-          "text": "是一只宝可梦...在睡觉？"
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "洞穴里黑黝黝的，身为草系宝可梦的坚果哑铃见不到阳光，\n心里有些发怵。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "头顶上方的倒悬钟乳石处，扑棱棱飞下一道敏捷的蓝影。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "哇，大铁块，你好耶！你是从矿山外面来的吗？"
         },
         {
           "type": "dialogue",
           "preload": "ferrothorn_left.png",
           "speaker": "坚果哑铃",
-          "text": "这就是那颗在我脑中梦呓的...迷路的星星吗？"
+          "text": "是的，我是森林里的坚果哑铃。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "坚果，好名字！我是超音蝠！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那个……请问你知道去矿洞平地的路要怎么走吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "知道知道！那里很好玩的，但是一般人可找不到那里！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那你能不能……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃的话被超音蝠兴奋地打断了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "坚果和超音蝠打一架，超音蝠就给你指路。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "打架？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "打架好玩！打架翅膀才不会发僵！坚果，来打架吧！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "接招吧！"
+        },
+        {
+          "type": "battle",
+          "battle_id": "zubat"
+        },
+        {
+          "type": "set_flag",
+          "flag": "zubat_befriended",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "坚果好厉害！我们交朋友，以后天天对战好不好？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "交朋友当然可以啦，天天对战就算了吧……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "耶！朋友！坚果为什么要去矿洞平地？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（完全没听我说话啊……）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "我看见流星落在那里。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "流星？怪不得刚才“咚”的好大一声！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "而且，我还听见了星星在对我说话……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "陌生的空灵声音",
+          "text": "星星……在哪里……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "又来了！就是这种声音！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "超音蝠扑棱着翅膀，使劲晃了晃脑袋，两只耳朵抖了抖。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "呜哇！超音蝠脑子里也有声音在响！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "星星，原来是活的吗？超音蝠也想去看看！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "前往平地的路就在岩壁的另一侧，\n平时超音蝠都是直接飞过去。"
+        },
+        {
+          "type": "actor_move",
+          "actor": "event",
+          "position": [
+            17,
+            4
+          ],
+          "duration_ms": 350
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "超音蝠飞到坚果哑铃头顶，伸出爪子使劲往上提。坚果哑铃纹丝不动，超音蝠累得滑落下来。"
+        },
+        {
+          "type": "actor_move",
+          "actor": "event",
+          "position": [
+            17,
+            5
+          ],
+          "duration_ms": 250
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "呜……坚果好重！看来你飞不起来。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "看来坚果只能先下到底层，从底下两层绕一大圈再爬上来了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "坚果，我先飞去平地守着星星，\n你可别迷路啦，要快点来啊！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "超音蝠欢快地扑腾翅膀飞向高空裂缝。"
+        },
+        {
+          "type": "actor_move",
+          "actor": "event",
+          "position": [
+            17,
+            2
+          ],
+          "duration_ms": 700
+        },
+        {
+          "type": "actor_visibility",
+          "actor": "event",
+          "visible": false
+        }
+      ]
+    },
+    {
+      "id": "aron_encounter",
+      "name": "矿洞B2F遇见可可多拉",
+      "trigger": "step",
+      "map": "caveB2f",
+      "position": [
+        16,
+        12
+      ],
+      "icon": "aron.png",
+      "once": true,
+      "conditions": {
+        "all": [],
+        "none": [
+          "aron_befriended"
+        ]
+      },
+      "steps": [
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "前方的通路被几块巨大的岩石死死堵住。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃正犯愁怎么过去，一阵沉闷而富有节奏的撞击声突然从石堆旁传来。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "咚——！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "顺着声音找去，只见一只圆滚滚、披着银白色钢铁头盔\n的可可多拉正揉着发红的脑门。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "你在撞石头玩吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "才不是玩，我在修行！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "师傅说，只要我能撞碎岩石，\n                  就算得上是真正的“强者”。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "为此师傅还教了我一招超厉害的“重磅冲撞”。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "不过……现在我的力气还不够大……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "但是你看上去就很硬很结实，来和我对战吧！\n我想和强者切磋，然后变得更强！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "如果我赢了，你可以把那招“重磅冲撞”也教给我吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "一言为定！接招！"
+        },
+        {
+          "type": "battle",
+          "battle_id": "aron"
+        },
+        {
+          "type": "set_flag",
+          "flag": "aron_befriended",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "哇——！大个子好厉害！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "师傅说过，重磅冲撞这一招，体型越大、\n分量越重的人使出来威力越大！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "你简直太适合了！我现在就教你。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "要把全身所有的重量一股脑压在核心上！先深呼吸，把身体沉下去，然后——像滚下山坡的铁矿球一样，轰地撞上去！"
+        },
+        {
+          "type": "set_flag",
+          "flag": "heavy_slam_learned",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "坚果哑铃学会了：重磅冲撞！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "重磅冲撞，钢属性招式。自身比目标越重，造成的伤害越高。\n战斗外使出，可粉碎地图上不可通行的岩石。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "大个子，我们一起撞开堵路的石头吧！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "一起吗？你不是在修行吗，一起撞算及格吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "师傅还说过，交朋友也是提升自己的战斗力，\n所以没关系！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（可可多拉，真的很崇拜师傅啊……）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那好吧，我们一起试试。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "轰隆隆……"
+        },
+        {
+          "type": "camera_pan",
+          "target": "position",
+          "position": [
+            15,
+            11
+          ],
+          "duration_ms": 650
+        },
+        {
+          "type": "break_rock",
+          "position": [
+            15,
+            11
+          ],
+          "duration_ms": 500
+        },
+        {
+          "type": "camera_shake",
+          "duration_ms": 360,
+          "intensity": 7
+        },
+        {
+          "type": "camera_pan",
+          "target": "player",
+          "position": [
+            0,
+            0
+          ],
+          "duration_ms": 650
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "撞开啦！我们两个合力天下无敌！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "啊……嗯……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（虽然感觉大部分是我压垮的……\n不过算了，他开心就好。）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "对了，大个子要去哪？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "我要去矿洞平地找流星……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃告诉可可多拉，自己脑海里听到了星星呼唤的声音。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "星星会说话！？我也想去看看！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "可以啊，我们一起吧。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "空灵的声音",
+          "text": "好......孤独....."
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "啊！又来了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "是真的欸！声音直接进到脑子里了！\n这下我更想去了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "不过等等，大个子，先别急着走。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "师傅说，只要我能粉碎岩石，就能找到他藏起来的礼物。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "我猜礼物一定藏在某块石头底下。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "好吧，那我就帮你找一下。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "好耶！找到之后，我要把那份礼物送给你！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "送给我吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "嗯！看见你冲碎岩石的样子，我知道了自己还差得远。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "不过今后我就有努力的目标了！我要谢谢大个子！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（❁´v`❁）"
+        },
+        {
+          "type": "set_flag",
+          "flag": "aron_gift_search_started",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "去击碎岩石，寻找“师傅”藏起来的礼物吧！"
+        }
+      ]
+    },
+    {
+      "id": "aron_comet_pendant",
+      "name": "找到可可多拉师傅的礼物",
+      "trigger": "rock_break",
+      "map": "caveB2f",
+      "position": [
+        15,
+        5
+      ],
+      "icon": "",
+      "once": true,
+      "conditions": {
+        "all": [
+          "aron_gift_search_started"
+        ],
+        "none": [
+          "comet_pendant_obtained"
+        ]
+      },
+      "steps": [
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "这就是师傅藏的礼物吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "快看看是什么。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "碎石底下躺着一枚彗星碎片制成的吊坠，上面还系着一截早已褪色的青色旧缎带。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "吊坠严丝合缝，像藏着什么秘密，但怎么用力也打不开。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "好特别的石头……里面好像有东西？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "好漂亮，那照我们说好的，这块石头送给你啦！"
+        },
+        {
+          "type": "set_flag",
+          "flag": "comet_pendant_obtained",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "获得了：系着旧缎带的彗星吊坠！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "对了，想去平地的话要走右边的梯子，\n上去之后还要继续往上爬。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "走那边的话，可能会遇到我师傅哦！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "大个子你先去吧，我撞得肚子咕咕叫了，\n等我吃两块铁矿石就马上追上去！"
+        }
+      ]
+    },
+    {
+      "id": "aron_gift_gate",
+      "name": "找到礼物前禁止离开矿洞B2F",
+      "trigger": "warp_attempt",
+      "map": "caveB2f",
+      "position": [
+        34,
+        7
+      ],
+      "icon": "",
+      "once": false,
+      "conditions": {
+        "all": [
+          "aron_gift_search_started"
+        ],
+        "none": [
+          "comet_pendant_obtained"
+        ]
+      },
+      "steps": [
+        {
+          "type": "toast",
+          "text": "可可多拉还在找“礼物”呢，帮帮他吧！",
+          "duration_ms": 2400
+        }
+      ]
+    },
+    {
+      "id": "sableye_encounter",
+      "name": "矿洞B1F遇见勾魂眼",
+      "trigger": "warp_arrival",
+      "map": "caveB1F",
+      "position": [
+        28,
+        7
+      ],
+      "icon": "",
+      "once": true,
+      "conditions": {
+        "all": [
+          "comet_pendant_obtained",
+          "heavy_slam_learned"
+        ],
+        "none": [
+          "sableye_befriended"
+        ]
+      },
+      "steps": [
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "？？？",
+          "text": "嘻嘻嘻……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "怪笑声从头顶传来。有人倒挂在钟乳石上，两只像钻石一样的眼睛直勾勾盯着坚果哑铃。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "？？？",
+          "text": "好好闻的铁矿味……还有一股太阳晒过的暖气……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "哇！谁在上面？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "一只勾魂眼轻盈地翻滚落地，绕着坚果哑铃打转。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "老身活了这么久，还是第一次见到这么漂亮的铁皮！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "小子，你背上那片快要脱落的旧铁皮，折射的光芒真是太耀眼了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "来对决吧！赢了的话，那片铁皮就归老身了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "哎？你说这片旧铁皮吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "这是我刚进化没褪干净的旧壳，身上正痒痒呢。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "你想要的话，我直接蹭下来送给你就好了呀？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "小资历真是不懂情调。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "没有通过战斗赢来的珍藏，根本没有收藏的价值！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "少废话，接招吧！"
+        },
+        {
+          "type": "battle",
+          "battle_id": "sableye"
+        },
+        {
+          "type": "set_flag",
+          "flag": "sableye_befriended",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "剧烈的冲击下，坚果哑铃身上的旧蜕片“啪嗒”一声整块脱落，\n就像小孩子掉了颗乳牙。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "呼……呼……真是小瞧你了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "这一下撞得可真结实……你的重磅冲撞，\n可比老身那个笨徒弟强太多了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "等等……徒弟？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "难道……你就是可可多拉的师傅？！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃想象了一下勾魂眼使出重磅冲撞的样子，艰难绷住。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "正是老身！怎么，老身身板小，就不能当师傅了吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "没、没有……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃用触手卷起脱落的旧铁皮，递给勾魂眼。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "给，刚才切磋刚好把它震下来了，送给你吧。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "嘻嘻！好成色！老身就不客气地收下了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（不是说不是赢来的就没价值吗……）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "看在你这么有诚意的份上，你急匆匆的是要去哪？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "我要穿过山洞，去矿洞平地看落下来的星星。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "去见星星？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "勾魂眼的目光落到了坚果哑铃触手上系着的彗星吊坠上。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "……嗯？那个吊坠……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "原来你见过可可多拉了啊。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "这是很贵重的东西吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "老身琢磨了几百年，也打不开那颗彗星石。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "不过直觉告诉老身，那块石头不简单。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "去见星星的时候带在身上，说不定会发生什么呢？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "快去吧！顺着前面的阶梯爬上去，\n马上就到你要找的平地了。"
         }
       ]
     }
