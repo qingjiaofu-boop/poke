@@ -24,8 +24,35 @@ def advance_dialogue(game):
         game.command(5)
 
 
+def dismiss_opening(game):
+    if game.active_map_event and game.active_map_event["id"] == "opening_evolution":
+        game.story_flags.add("opening_complete")
+        game.finish_map_event()
+
+
+def test_opening_event_and_world_spawn():
+    game = Adventure(None)
+    try:
+        assert game.map_view == "world"
+        assert tuple(game.map_view_pos) == (40, 56)
+        assert game.tile_maps["world"].start == (40, 56)
+        assert game.active_map_event["id"] == "opening_evolution"
+        assert game.event_action["type"] == "play_animation"
+        assert game.event_action["step"]["animation"] == "ferroseed_evolution"
+        assert len(game.load_event_animation("ferroseed_evolution")) == 8
+
+        game.event_action["frame"] = game.event_action["total"] - 1
+        game.update_event_action()
+        assert game.dialogue_source == "map_event"
+        assert game.dialogue_preload == "ferrothorn_left.png"
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
 def test_story_path():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.map_view = None
         game.pos[:] = [1, 2]
@@ -62,6 +89,7 @@ def test_story_path():
 
 def test_tile_map_loading_and_view_switching():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         expected = {"home", "friend", "route", "forest1", "route1", "moonmountain",
                     "grancave", "caveB1F", "caveB2f", "finalcave", "world"}
@@ -83,8 +111,7 @@ def test_tile_map_loading_and_view_switching():
         assert game.map_view == "world"
         assert game.map_view_pos == list(world.start)
         assert world.size == (120, 120)
-        assert world.start == (26 + game.tile_maps["home"].start[0],
-                               64 + game.tile_maps["home"].start[1])
+        assert world.start == (40, 56)
         assert (0, 0) in world.blocked
         assert world.start not in world.blocked
 
@@ -99,6 +126,7 @@ def test_tile_map_loading_and_view_switching():
 
 def test_npc_collision_and_step_events():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.map_view = None
         father = tuple(game.NPC_POS["home"])
@@ -126,6 +154,7 @@ def test_npc_collision_and_step_events():
 
 def test_battle_assets_and_sensor_moves():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.map_view = None
         game.start_battle()
@@ -168,6 +197,7 @@ def test_battle_assets_and_sensor_moves():
 
 def test_atomic_grid_movement_and_camera():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         assert game.screen.get_size() == (480, 320)
         assert game.display.get_size() == (960, 640)
@@ -226,6 +256,7 @@ def test_atomic_grid_movement_and_camera():
 
 def test_breakable_cave_rocks():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.switch_map_view(1)
         tile_map = game.tile_maps[game.map_view]
@@ -294,6 +325,7 @@ def test_breakable_cave_rocks():
 
 def test_bidirectional_warps():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         assert len(game.WARPS) == 12
         game.map_view = "world"
@@ -370,6 +402,7 @@ def test_bidirectional_warps():
 
 def test_embedded_zubat_event_battle_starts_real_encounter():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.start_event_battle("zubat")
         assert game.encounter_battle is not None
@@ -399,6 +432,7 @@ def test_embedded_zubat_event_battle_starts_real_encounter():
 
 def test_aron_story_break_reward_and_warp_gate():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         cave = game.tile_maps["caveB2f"]
         assert game.is_breakable_rock(cave, (15, 11))
@@ -443,6 +477,7 @@ def test_aron_story_break_reward_and_warp_gate():
 
 def test_sableye_warp_arrival_and_vibration_move():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         game.story_flags.update({"comet_pendant_obtained", "heavy_slam_learned"})
         game.map_view = "caveB2f"
@@ -477,8 +512,35 @@ def test_sableye_warp_arrival_and_vibration_move():
         pygame.quit()
 
 
+def test_jirachi_finale_gate_trigger_and_effects():
+    game = Adventure(None)
+    dismiss_opening(game)
+    try:
+        game.story_flags.add("meteor_landed")
+        game.map_view = "grancave"
+        game.map_view_pos[:] = (4, 9)
+        assert game.trigger_warp()
+        assert game.map_view == "grancave"
+        assert game.active_map_event["id"] == "jirachi_final_gate"
+
+        game.finish_map_event()
+        game.story_flags.update({"sableye_befriended", "comet_pendant_obtained"})
+        game.map_view = "finalcave"
+        game.map_view_pos[:] = (7, 6)
+        assert game.trigger_map_event()
+        assert game.active_map_event["id"] == "jirachi_finale"
+        assert game.dialogue_preload == "no_portrait_bottom.png"
+        assert game.load_map_event_icon("jirachi_sleep_1.png") is not None
+        assert game.load_event_animation("star_light")
+        assert game.load_event_animation("star_depart")
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
 def test_ordered_map_event_dialogue_battle_and_once():
     game = Adventure(None)
+    dismiss_opening(game)
     try:
         event = {
             "id": "runtime_test",
@@ -549,6 +611,7 @@ def test_ordered_map_event_dialogue_battle_and_once():
 
 
 if __name__ == "__main__":
+    test_opening_event_and_world_spawn()
     test_story_path()
     test_tile_map_loading_and_view_switching()
     test_npc_collision_and_step_events()
@@ -556,6 +619,7 @@ if __name__ == "__main__":
     test_embedded_zubat_event_battle_starts_real_encounter()
     test_aron_story_break_reward_and_warp_gate()
     test_sableye_warp_arrival_and_vibration_move()
+    test_jirachi_finale_gate_trigger_and_effects()
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
     test_bidirectional_warps()

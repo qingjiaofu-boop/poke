@@ -2,6 +2,88 @@
   "version": 2,
   "events": [
     {
+      "id": "opening_evolution",
+      "name": "坚果哑铃的进化与启程",
+      "trigger": "game_start",
+      "map": "world",
+      "position": [
+        40,
+        56
+      ],
+      "icon": "",
+      "once": true,
+      "conditions": {
+        "all": [],
+        "none": [
+          "opening_complete"
+        ]
+      },
+      "steps": [
+        {
+          "type": "play_animation",
+          "animation": "ferroseed_evolution",
+          "position": [
+            40,
+            56
+          ],
+          "duration_ms": 2200
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "身体……感觉好重……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "哈哈，刚进化确实会有这种感觉。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "这是树林龟，是我种子哑铃……不对，是我坚果哑铃最要好的朋友。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "不过这也说明你的身体里有了新的力量。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "真的？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "来我们平时锻炼的地方吧，我教你两招。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "通过 STC 导航键控制方向进行移动"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "去上面找树林龟吧！"
+        },
+        {
+          "type": "set_flag",
+          "flag": "opening_complete",
+          "value": true
+        }
+      ]
+    },
+    {
       "id": "grotle_cave_gate",
       "name": "完成树林龟训练前禁止进入矿洞",
       "trigger": "warp_attempt",
@@ -989,7 +1071,7 @@
           "type": "dialogue",
           "preload": "sableye_right.png",
           "speaker": "勾魂眼",
-          "text": "小子，你背上那片快要脱落的旧铁皮，折射的光芒真是太耀眼了！"
+          "text": "小子，你背上那片快要脱落的旧铁皮，\n折射的光芒真是太耀眼了！"
         },
         {
           "type": "dialogue",
@@ -1046,7 +1128,7 @@
           "type": "dialogue",
           "preload": "no_portrait_bottom.png",
           "speaker": "",
-          "text": "剧烈的冲击下，坚果哑铃身上的旧蜕片“啪嗒”一声整块脱落，\n就像小孩子掉了颗乳牙。"
+          "text": "剧烈的冲击下，坚果哑铃身上的旧蜕片“啪嗒”一声整块脱落，\n他感到原本搔痒的地方一下变得空荡荡，就像掉了颗乳牙。"
         },
         {
           "type": "dialogue",
@@ -1164,6 +1246,12 @@
         },
         {
           "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（吞口水）"
+        },
+        {
+          "type": "dialogue",
           "preload": "sableye_right.png",
           "speaker": "勾魂眼",
           "text": "不过直觉告诉老身，那块石头不简单。"
@@ -1176,9 +1264,579 @@
         },
         {
           "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "空灵的声音",
+          "text": "不要......留下我一个......"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那个声音又来了，勾魂眼老师，星星...也会感到寂寞吗？"
+        },
+        {
+          "type": "dialogue",
           "preload": "sableye_right.png",
           "speaker": "勾魂眼",
-          "text": "快去吧！顺着前面的阶梯爬上去，\n马上就到你要找的平地了。"
+          "text": "答案不是就在前面了吗？\n顺着楼梯往上爬，马上就到矿洞平地了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃告别了勾魂眼，刚走出两步远。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "喂，小子！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "见到星星之后......要和ta好好相处啊。"
+        }
+      ]
+    },
+    {
+      "id": "jirachi_final_gate",
+      "name": "完成勾魂眼事件前禁止前往矿洞平地",
+      "trigger": "warp_attempt",
+      "map": "grancave",
+      "position": [
+        4,
+        9
+      ],
+      "icon": "",
+      "once": false,
+      "conditions": {
+        "all": [
+          "meteor_landed"
+        ],
+        "none": [
+          "sableye_befriended"
+        ]
+      },
+      "steps": [
+        {
+          "type": "toast",
+          "text": "还没有找到通往矿洞平地的线索，先继续探索矿洞吧。",
+          "duration_ms": 2600
+        }
+      ]
+    },
+    {
+      "id": "jirachi_finale",
+      "name": "七日与千年的愿望",
+      "trigger": "step",
+      "map": "finalcave",
+      "position": [
+        7,
+        6
+      ],
+      "icon": "jirachi_sleep_1.png",
+      "once": true,
+      "conditions": {
+        "all": [
+          "meteor_landed",
+          "sableye_befriended",
+          "comet_pendant_obtained"
+        ],
+        "none": [
+          "jirachi_finale_complete"
+        ]
+      },
+      "steps": [
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "穿过最后的岩缝，坚果哑铃终于来到矿洞上方的平地。陨石坑中央，一枚星形结晶正发出微弱的光。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "坚果！你终于来啦！超音蝠一直守着星星，它刚才又说梦话了！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "呼……呼……大个子走得太快了！这个亮晶晶的就是星星吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "基拉祈的心声",
+          "text": "好冷……不要又只剩下我一个……"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "基拉祈的心声",
+          "text": "有没有人......基拉祈......不想一个人......"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "结晶表面的裂纹忽明忽暗。里面蜷缩着一只从未见过的宝可梦，\n他像是要从沉睡中苏醒，却被坚硬的陨石外壳紧紧困住。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "超音蝠能听见里面的回声！左边那道裂缝最薄！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "那我把周围的碎石撞开！大个子，最硬的外壳交给你！"
+        },
+        {
+          "type": "play_animation",
+          "animation": "dust",
+          "position": [
+            7,
+            6
+          ],
+          "duration_ms": 650
+        },
+        {
+          "type": "camera_shake",
+          "duration_ms": 420,
+          "intensity": 7
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "抓紧了！重磅冲撞！"
+        },
+        {
+          "type": "camera_shake",
+          "duration_ms": 520,
+          "intensity": 11
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "陨石外壳轰然裂开。坚果哑铃将从洞口收集到的光聚在触手尖端，温暖的光芒缓缓包围了结晶。"
+        },
+        {
+          "type": "play_animation",
+          "animation": "star_light",
+          "position": [
+            7,
+            6
+          ],
+          "duration_ms": 1000
+        },
+        {
+          "type": "set_flag",
+          "flag": "jirachi_awakened",
+          "value": true
+        },
+        {
+          "type": "actor_visibility",
+          "actor": "event",
+          "visible": false
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "……是你们叫醒了我吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "星星醒啦！我是超音蝠，这两个是坚果和小铁块！\n我们来和你交朋友！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "朋友……不，我不需要朋友。你们快走吧。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "可是，我们一路都听见你在呼唤。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "我每一千年只能醒来七天。七天以后，\n你们会继续生活，我却要重新回到漫长的梦里。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "上一次也有人说会一直陪着我。\n可再次睁开眼睛时，他们全都不见了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "既然最后一定会失去，一开始就不要成为朋友比较好......"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "他看着遥远的地方，没有看在场任何一个人的眼睛。\n说话的声音也越来越微小，最后半句时几乎要消失了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "可是你的嘴巴叫我们走，心里的声音\n               却一直在喊“不要丢下我”呀！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "七天也很久了！可以撞好多石头，还能吃好多顿铁矿石！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "我们不能替你消除离别，但至少这七天，\n                 我们可以陪着你。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "那七天以后，我还是会舍不得你们。还会想起以前的大家。\n那时候又要怎么办？下个千年醒来时我又要怎么办？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那就舍不得吧。会难过，说明我们的相遇真的很重要。\n成为朋友之前就嚷嚷着离别什么的，至少要在真正分别时再说吧:>"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "坚果哑铃触手上系着的彗星吊坠忽然变得滚烫，褪色的青色缎带在星光中轻轻飘起。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "那根缎带......我认识......一千年以前我见过它曾经的样子"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "这个吊坠……是他们留下的。可是无论我怎样呼唤，\n他们都回不来了，不是吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "我只是希望……他们没有忘记我。"
+        },
+        {
+          "type": "play_animation",
+          "animation": "star_light",
+          "position": [
+            7,
+            6
+          ],
+          "duration_ms": 900
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "在基拉祈吐露心声后，\n紧闭了千年的彗星吊坠，\n在基拉祈的愿望中缓缓开启。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "基拉祈，当你听见这些话时，\n                 我们应该已经不能再陪你玩了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "不要以为我们没有回来，就是忘记了你。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "你只醒来七天，真的太短暂了......\n但对我们来说，那是像宝石一样，永远闪闪发光的珍贵回忆。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "虽然只相处了七天，但我们自认已经相当了解你了。\n基拉祈，不要为我们的分别难过，像我们一样，先为相遇而幸福吧。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "所以，不要一直等我们。去认识新的朋友，\n把我们的故事讲给他们听。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "千年前的声音",
+          "text": "这样，我们的友情也会抵达下一个千年。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "我也......我也一样......\n我也一样也为我们的相遇而感到幸福......大家......"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "那么，可以成为我们的朋友了吗，基拉祈？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "……嗯。接下来的七天，我们一起去创造美好的回忆吧。"
+        },
+        {
+          "type": "set_flag",
+          "flag": "jirachi_heart_opened",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第一天　星星的第一顿晚餐"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "超音蝠带来森林树果，可可多拉抱来最漂亮的铁矿石。\n基拉祈看着两份完全不同的食物，第一次笑出了声。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第二天　飞行练习"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "只要大家一起使劲，坚果这次一定可以飞起来！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "结果超音蝠和基拉祈累得挂在触手上喘气，坚果哑铃依旧纹丝不动。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第三天　天下无敌撞击队"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "可可多拉拉着坚果哑铃表演撞岩石，响声惊动了勾魂眼。\n两只宝可梦被师傅追着训了整整一圈。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "sableye_right.png",
+          "speaker": "勾魂眼",
+          "text": "交朋友不是让你们把老身的矿洞拆掉！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第四天　森林里的切磋"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "大家回到森林拜访树林龟。夕阳下，\n他们进行了一场没有输赢的对战。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "grotle_right.png",
+          "speaker": "树林龟",
+          "text": "能让大家这样笑出来，\n看来你已经学会了比战斗更重要的力量。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第五天　小小的愿望"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "超音蝠希望回声能多响一会儿，可可多拉希望找到最闪亮的矿石。\n基拉祈把这些小愿望一一实现。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "愿望不一定要惊天动地。\n只要实现的时候有人感到开心，那对我来说它就是一个好愿望。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第六天　新的缎带"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "大家把各自的愿望写在许愿笺上。坚果哑铃又在褪色的青色缎带旁，系上了一根新鲜的绿色藤丝。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "这样，下次醒来时，我就能同时看见两个时代的朋友了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "第七天　黎明之前"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "第七天的清晨，大家再次来到陨石落下的平地。天边已经泛白，基拉祈身上的光也越来越亮。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "一千年以后，你们也不会在这里了，对吗？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "也许吧，我之前从没考虑过那么久以后的事。\n但到时候，你可以把我们的故事讲给下一群朋友听。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "还要告诉他们，超音蝠是你认识过最厉害的朋友！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "不对，是最吵的朋友！"
+        },
+        {
+          "type": "dialogue",
+          "preload": "jirachi_right.png",
+          "speaker": "基拉祈",
+          "text": "……嗯。下次醒来，我会先向他们介绍你们。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_bottom.png",
+          "speaker": "",
+          "text": "基拉祈抱紧系着两段缎带的吊坠，在朋友们的注视中缓缓升向天空。"
+        },
+        {
+          "type": "play_animation",
+          "animation": "star_depart",
+          "position": [
+            7,
+            6
+          ],
+          "duration_ms": 1500
+        },
+        {
+          "type": "dialogue",
+          "preload": "zubat_right.png",
+          "speaker": "超音蝠",
+          "text": "说起来只有坚果没有把自己许的愿望说出口，\n             你许了什么愿望呢？"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "说出口的话，愿望会不会变得不灵呢 ：）"
+        },
+        {
+          "type": "dialogue",
+          "preload": "aron_right.png",
+          "speaker": "可可多拉",
+          "text": "才不会呢，基拉祈可是把我们的愿望刷的一下就实现了！\n他自己也说，对着星星许下的愿望，百分之百会实现的。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "是吗，那这可真是有史以来我听过，最好最好的消息了。"
+        },
+        {
+          "type": "dialogue",
+          "preload": "ferrothorn_left.png",
+          "speaker": "坚果哑铃",
+          "text": "（希望下一次流星落下时，那颗星星也不会是孤单一人。）"
+        },
+        {
+          "type": "play_animation",
+          "animation": "star_light",
+          "position": [
+            7,
+            3
+          ],
+          "duration_ms": 700
+        },
+        {
+          "type": "set_flag",
+          "flag": "jirachi_finale_complete",
+          "value": true
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "THE END\n七日与千年的愿望"
         }
       ]
     }

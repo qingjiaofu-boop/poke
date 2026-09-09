@@ -113,6 +113,25 @@ def test_authored_aron_event_chain():
     assert "comet_pendant_obtained" in gate["conditions"]["none"]
 
 
+def test_authored_opening_event():
+    events = {event["id"]: event for event in load_event_document()["events"]}
+    opening = events["opening_evolution"]
+    assert opening["trigger"] == "game_start"
+    assert opening["map"] == "world"
+    assert opening["position"] == [40, 56]
+    assert opening["conditions"]["none"] == ["opening_complete"]
+    assert opening["steps"][0] == {
+        "type": "play_animation",
+        "animation": "ferroseed_evolution",
+        "position": [40, 56],
+        "duration_ms": 2200,
+    }
+    assert opening["steps"][-2]["preload"] == "no_portrait_center.png"
+    assert opening["steps"][-1] == {
+        "type": "set_flag", "flag": "opening_complete", "value": True,
+    }
+
+
 def test_authored_sableye_warp_arrival_event():
     event = next(
         item for item in load_event_document()["events"]
@@ -128,10 +147,50 @@ def test_authored_sableye_warp_arrival_event():
                for step in event["steps"])
 
 
+def test_authored_jirachi_finale_event():
+    events = {event["id"]: event for event in load_event_document()["events"]}
+    gate = events["jirachi_final_gate"]
+    assert gate["trigger"] == "warp_attempt"
+    assert gate["map"] == "grancave"
+    assert gate["position"] == [4, 9]
+    assert "sableye_befriended" in gate["conditions"]["none"]
+
+    finale = events["jirachi_finale"]
+    assert finale["map"] == "finalcave"
+    assert finale["position"] == [7, 6]
+    assert finale["icon"] == "jirachi_sleep_1.png"
+    assert {
+        "meteor_landed", "sableye_befriended", "comet_pendant_obtained",
+    } <= set(finale["conditions"]["all"])
+    animations = [
+        step["animation"] for step in finale["steps"]
+        if step["type"] == "play_animation"
+    ]
+    assert "star_light" in animations
+    assert "star_depart" in animations
+    day_cards = [
+        step for step in finale["steps"]
+        if step["type"] == "dialogue"
+        and step["preload"] == "no_portrait_center.png"
+        and step["text"].startswith(("第一天", "第二天", "第三天", "第四天", "第五天", "第六天", "第七天"))
+    ]
+    assert len(day_cards) == 7
+    assert any(step["type"] == "set_flag" and step["flag"] == "jirachi_finale_complete"
+               for step in finale["steps"])
+
+    adventure_source = (Path(__file__).resolve().parent / "essentials_adventure.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'elif name == "star_depart":' in adventure_source
+    assert 'self._load("JIRACHI.png")' in adventure_source
+
+
 if __name__ == "__main__":
     test_event_document_round_trip()
     test_normalization_and_unique_ids()
     test_trigger_conditions_and_cutscene_steps()
+    test_authored_opening_event()
     test_authored_aron_event_chain()
     test_authored_sableye_warp_arrival_event()
+    test_authored_jirachi_finale_event()
     print("event system ok")
