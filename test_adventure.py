@@ -323,6 +323,54 @@ def test_breakable_cave_rocks():
         pygame.quit()
 
 
+def test_zubat_event_tile_is_forced_by_breakable_rock_below_it():
+    game = Adventure(None)
+    dismiss_opening(game)
+    try:
+        cave = game.tile_maps["grancave"]
+        entrance = (25, 10)
+        next_floor = (13, 9)
+        zubat_tile = (17, 5)
+        new_rock = (17, 6)
+
+        zubat_event = next(event for event in game.map_events
+                           if event["id"] == "zubat_encounter")
+        assert tuple(zubat_event["position"]) == zubat_tile
+        assert new_rock in cave.blocked
+        assert game.is_breakable_rock(cave, new_rock)
+
+        def reachable(blocked, forbidden=frozenset()):
+            queue = deque([entrance])
+            visited = {entrance}
+            while queue:
+                point = queue.popleft()
+                if point == next_floor:
+                    return True
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    target = point[0] + dx, point[1] + dy
+                    if (0 <= target[0] < cave.width and 0 <= target[1] < cave.height
+                            and target not in blocked and target not in forbidden
+                            and target not in visited):
+                        visited.add(target)
+                        queue.append(target)
+            return False
+
+        assert reachable(cave.blocked)
+        assert not reachable(cave.blocked, {zubat_tile})
+        assert reachable(cave.blocked - {new_rock}, {zubat_tile})
+
+        lower_before = cave.layers["lower"][new_rock[1]][new_rock[0]]
+        current_before = cave.layers["current"][new_rock[1]][new_rock[0]]
+        assert game.break_rock_at(cave, new_rock)
+        assert cave.layers["lower"][new_rock[1]][new_rock[0]] is lower_before
+        assert cave.layers["current"][new_rock[1]][new_rock[0]] is current_before
+        assert not cave.layers["upper"][new_rock[1]][new_rock[0]].get_bounding_rect(min_alpha=1)
+        assert new_rock not in cave.blocked
+    finally:
+        game.serial.close()
+        pygame.quit()
+
+
 def test_bidirectional_warps():
     game = Adventure(None)
     dismiss_opening(game)
@@ -622,6 +670,7 @@ if __name__ == "__main__":
     test_jirachi_finale_gate_trigger_and_effects()
     test_atomic_grid_movement_and_camera()
     test_breakable_cave_rocks()
+    test_zubat_event_tile_is_forced_by_breakable_rock_below_it()
     test_bidirectional_warps()
     test_ordered_map_event_dialogue_battle_and_once()
     print("story path ok")
