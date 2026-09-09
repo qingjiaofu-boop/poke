@@ -511,6 +511,15 @@ class Game:
             for x in range(width)
             if (x, y) not in covered
         )
+        try:
+            configured_start = tuple(int(value) for value in world_spec.get("start", ()))
+        except (TypeError, ValueError):
+            configured_start = ()
+        if (len(configured_start) == 2 and
+                0 <= configured_start[0] < width and
+                0 <= configured_start[1] < height and
+                configured_start not in blocked):
+            start = configured_start
         if start in blocked:
             start = next(((x, y) for y in range(height) for x in range(width)
                           if (x, y) not in blocked), (0, 0))
@@ -1916,7 +1925,13 @@ class Game:
         self.encounter_effect_actor = None
         self.meteor_phase = 0
         self.player_hp, self.enemy_hp = 100, 100
-        self.show_toast("回到父亲的家。靠近左上角父亲并按 Enter。", 3)
+        self.toast = ""
+        self.toast_until = 0.0
+        world = self.tile_maps.get("world")
+        if world:
+            self.map_view = "world"
+            self.map_view_pos[:] = world.start
+        self.trigger_game_start_event()
 
     def show_toast(self, text, seconds=2):
         self.toast, self.toast_until = text, time.monotonic() + seconds
@@ -1947,6 +1962,13 @@ class Game:
         self.display.blit(scaled, (0, 0))
         pygame.display.flip()
 
+    def is_event_animation_active(self, name):
+        action = self.event_action
+        return bool(
+            action and action.get("type") == "play_animation"
+            and action.get("step", {}).get("animation") == name
+        )
+
     def draw_map_view(self):
         tile_map = self.tile_maps[self.map_view]
         actor_pos = self.actor_grid_position(self.map_view_pos)
@@ -1957,7 +1979,8 @@ class Game:
         self.draw_map_event_icons(tile_map, camera_x, camera_y, origin_x, origin_y)
         actor_x = origin_x + (actor_pos[0] + 0.5) * TILE_SIZE - camera_x
         actor_y = origin_y + (actor_pos[1] + 0.5) * TILE_SIZE - camera_y
-        self.draw_actor(actor_x, actor_y)
+        if not self.is_event_animation_active("ferroseed_evolution"):
+            self.draw_actor(actor_x, actor_y)
         self.draw_tile_layer(tile_map, "upper", camera_x, camera_y, origin_x, origin_y)
         self.draw_rock_break(camera_x, camera_y, origin_x, origin_y)
         self.draw_event_animation(camera_x, camera_y, origin_x, origin_y)
@@ -2094,7 +2117,8 @@ class Game:
             if self.rock_broken and self.jirachi:
                 self.screen.blit(self.jirachi, self.jirachi.get_rect(center=(390, 75)))
         x, y = self.tile_point(actor_pos)
-        self.draw_actor(x, y)
+        if not self.is_event_animation_active("ferroseed_evolution"):
+            self.draw_actor(x, y)
         # Upper layer is intentionally rendered last: tree crowns and roof
         # edges can cover the actor's head while walking underneath them.
         if outdoor and self.scene in self.tile_maps:
@@ -2111,6 +2135,21 @@ class Game:
                 image = self._load(f"resource/Meteor/Meteor{index}.png")
                 if image:
                     frames.append(image)
+        elif name == "star_depart":
+            image = self._load("JIRACHI.png")
+            if image:
+                frames.append(image)
+        elif name == "star_light":
+            frames.extend(self._load_battle_effect_frames("light.png"))
+        elif name == "ferroseed_evolution":
+            seed = self._load("resource/battle/pokemon/front/ferroseed.png")
+            evolved = self._load("resource/battle/pokemon/front/ferrothorn.png")
+            if seed and evolved:
+                seed_bounds = seed.get_bounding_rect(min_alpha=1)
+                evolved_bounds = evolved.get_bounding_rect(min_alpha=1)
+                seed = seed.subsurface(seed_bounds).copy()
+                evolved = evolved.subsurface(evolved_bounds).copy()
+                frames.extend((seed, seed, evolved, seed, evolved, seed, evolved, evolved))
         elif name == "dust":
             sheet = self._load("resource/map/effects/dust_and_grass.png")
             if sheet:
@@ -2138,6 +2177,16 @@ class Game:
         screen_y = origin_y + (y + 0.5) * TILE_SIZE - camera_y
         if name == "meteor":
             screen_y -= (1.0 - progress) * 180
+            size = (64, 64)
+        elif name == "star_depart":
+            screen_y -= progress * 190
+            size = (64, 64)
+        elif name == "star_light":
+            size = (112, 112)
+        elif name == "ferroseed_evolution":
+            flash_alpha = round(105 * abs(math.sin(progress * math.pi * 7)))
+            self.fade_overlay.fill((255, 255, 255, flash_alpha))
+            self.screen.blit(self.fade_overlay, (0, 0))
             size = (64, 64)
         else:
             size = (80, 80)
