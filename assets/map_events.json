@@ -152,6 +152,18 @@
         },
         {
           "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "日光束 草系特殊攻击招式\n光照越强 威力越大\n随stc光照传感器返回值，威力会在70到120间浮动"
+        },
+        {
+          "type": "dialogue",
+          "preload": "no_portrait_center.png",
+          "speaker": "",
+          "text": "光合作用 草系变化招式 \n回复自身Hp 光照越强 回复量越大\n回复量会在30%到50%间浮动"
+        },
+        {
+          "type": "dialogue",
           "preload": "grotle_right.png",
           "speaker": "树林龟",
           "text": "不知不觉已经这么晚了，我要先走了，下次再见！"
@@ -694,7 +706,7 @@
           "type": "dialogue",
           "preload": "no_portrait_center.png",
           "speaker": "",
-          "text": "重磅冲撞，钢属性招式。自身比目标越重，造成的伤害越高。\n战斗外使出，可粉碎地图上不可通行的岩石。"
+          "text": "重磅冲撞，钢属性物理攻击招式，可敲击小板使出\n自身比目标越重，造成的伤害越高。\n战斗外使出，可粉碎地图上不可通行的岩石。"
         },
         {
           "type": "dialogue",
